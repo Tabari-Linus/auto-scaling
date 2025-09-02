@@ -22,7 +22,7 @@ Parameters:
   InstanceType:
     Type: String
     Default: t3.micro
-  
+
 Resources:
   VPC:
     Type: AWS::EC2::VPC
@@ -84,7 +84,6 @@ Resources:
         - Key: Name
           Value: PrivateSubnet2
 
-
   PublicRouteTable:
     Type: AWS::EC2::RouteTable
     Properties:
@@ -106,7 +105,6 @@ Resources:
       SubnetId: !Ref PublicSubnet2
       RouteTableId: !Ref PublicRouteTable
 
- 
   NatEIP:
     Type: AWS::EC2::EIP
     Properties:
@@ -163,7 +161,6 @@ Resources:
       Roles:
         - !Ref EC2Role
 
-
   ALBSecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
@@ -188,7 +185,6 @@ Resources:
         - IpProtocol: -1
           CidrIp: 0.0.0.0/0
 
-
   LaunchTemplate:
     Type: AWS::EC2::LaunchTemplate
     Properties:
@@ -211,8 +207,9 @@ Resources:
             
             # Create index.html with proper HTML structure
             cat <<EOF > /var/www/html/index.html
+            <!DOCTYPE html>
             <html>
-            <head><title>Welcome to the Auto Scaling Group Lab</title></head>
+            <head><title>Auto Scaling Lab</title></head>
             <body>
               <h1>Hello from $PRIVATE_IP / $INSTANCE_ID</h1>
               <button onclick="window.location.href='/cgi-bin/stress.sh'">Stress CPU</button>
@@ -220,25 +217,27 @@ Resources:
             </html>
             EOF
             
-            # Create CGI directory and stress.sh with HTTP headers
+            # Create CGI script with proper headers
             mkdir -p /var/www/cgi-bin/
             cat <<EOF > /var/www/cgi-bin/stress.sh
             #!/bin/bash
             echo "Content-type: text/html"
             echo ""
+            echo "<!DOCTYPE html>"
             echo "<html>"
+            echo "<head><title>Stress Test</title></head>"
             echo "<body>"
             echo "<h1>CPU Stress Test Initiated!</h1>"
-            echo "<p>The instance $INSTANCE_ID is now running a stress test.</p>"
-            echo "<p>Return to the main page to refresh and observe scaling effects.</p>"
+            echo "<p>Instance: $INSTANCE_ID</p>"
+            echo "<p>Return to <a href='/'>main page</a> to observe scaling.</p>"
             echo "</body>"
             echo "</html>"
-            stress --cpu 2 --timeout 300 &  # Longer timeout for reliable triggering
+            stress --cpu 2 --timeout 300 &
             EOF
             
             chmod +x /var/www/cgi-bin/stress.sh
             
-            # Enable CGI in Apache config
+            # Configure Apache for CGI
             sed -i '/^#LoadModule cgi_module/s/^#//' /etc/httpd/conf/httpd.conf
             sed -i '/^#AddHandler cgi-script .cgi/s/^#//' /etc/httpd/conf/httpd.conf
             echo "AddHandler cgi-script .sh" >> /etc/httpd/conf/httpd.conf
@@ -248,7 +247,6 @@ Resources:
             echo "    Require all granted" >> /etc/httpd/conf/httpd.conf
             echo "</Directory>" >> /etc/httpd/conf/httpd.conf
             systemctl restart httpd
-
 
   AutoScalingGroup:
     Type: AWS::AutoScaling::AutoScalingGroup
@@ -267,7 +265,6 @@ Resources:
       HealthCheckType: ELB
       HealthCheckGracePeriod: 300
 
-
   ScaleOutPolicy:
     Type: AWS::AutoScaling::ScalingPolicy
     Properties:
@@ -276,7 +273,6 @@ Resources:
       ScalingAdjustment: 1
       AdjustmentType: ChangeInCapacity
       Cooldown: 300
-
 
   CPUAlarmHigh:
     Type: AWS::CloudWatch::Alarm
@@ -327,8 +323,6 @@ Resources:
         - Type: forward
           TargetGroupArn: !Ref TargetGroup
 
-
-
 Outputs:
   LoadBalancerDNS:
     Description: ALB DNS Name
@@ -336,4 +330,3 @@ Outputs:
   GitHubRepo:
     Description: GitHub Repository URL
     Value: !Sub https://github.com/Tabari-Linus/auto-scaling-lab.git
-    
