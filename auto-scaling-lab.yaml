@@ -253,6 +253,16 @@ Resources:
 
             # Allow execution of .sh scripts in cgi-bin
             echo "AddHandler cgi-script .sh" >> /etc/httpd/conf/httpd.conf
+            
+            # Add new directory block to allow CGI execution
+            cat >> /etc/httpd/conf/httpd.conf <<EOF
+            ScriptInterpreterSource On
+            <Directory "/var/www/cgi-bin">
+                AllowOverride None
+                Options +ExecCGI
+                Require all granted
+            </Directory>
+            EOF
 
             # Restart Apache to load new settings
             systemctl restart httpd
