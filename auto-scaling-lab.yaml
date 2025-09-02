@@ -208,7 +208,7 @@ Resources:
             INSTANCE_ID=$(curl -s http://169.254.169.254/latest/meta-data/instance-id)
             IP_ADDRESS=$(curl -s http://169.254.169.254/latest/meta-data/local-ipv4)
             
-            # Create the HTML page
+            # Create the HTML page with a corrected form action
             cat > /var/www/html/index.html <<EOF
             <html>
             <body>
@@ -223,12 +223,15 @@ Resources:
             # Create a dedicated directory for CGI scripts
             mkdir -p /var/www/cgi-bin
             
-            # Create the CGI script in the new directory
+            # Create the CGI script with background execution
             cat > /var/www/cgi-bin/stress.sh <<EOF
             #!/bin/bash
-            echo "Content-type: text/plain"
+            echo "Content-type: text/html"
             echo ""
-            stress --cpu 2 --timeout 60
+            echo "<h1>CPU Stress Test Initiated!</h1>"
+            echo "<p>Return to the previous page to see the effect.</p>"
+            # Run stress in the background and detach from the shell
+            stress --cpu 2 --timeout 60 &
             EOF
             
             chmod +x /var/www/cgi-bin/stress.sh
