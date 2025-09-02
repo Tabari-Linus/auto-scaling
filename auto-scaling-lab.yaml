@@ -204,11 +204,11 @@ Resources:
             #!/bin/bash
             yum update -y
             yum install -y httpd stress
-            
+
             INSTANCE_ID=$(curl -s http://169.254.169.254/latest/meta-data/instance-id)
             IP_ADDRESS=$(curl -s http://169.254.169.254/latest/meta-data/local-ipv4)
-            
-            # Create the HTML page with a corrected form action
+
+            # Create index page with button
             cat > /var/www/html/index.html <<EOF
             <html>
             <body>
@@ -219,29 +219,32 @@ Resources:
             </body>
             </html>
             EOF
-            
-            # Create a dedicated directory for CGI scripts
+
+            # Create CGI script
             mkdir -p /var/www/cgi-bin
-            
-            # Create the CGI script with background execution
             cat > /var/www/cgi-bin/stress.sh <<EOF
             #!/bin/bash
             echo "Content-type: text/html"
             echo ""
             echo "<h1>CPU Stress Test Initiated!</h1>"
             echo "<p>Return to the previous page to see the effect.</p>"
-            # Run stress in the background and detach from the shell
             stress --cpu 2 --timeout 60 &
             EOF
-            
+
             chmod +x /var/www/cgi-bin/stress.sh
-            
-            # Start and enable the Apache service
-            systemctl start httpd
+
+            # Enable CGI module in Apache
+            echo "ScriptAlias /cgi-bin/ /var/www/cgi-bin/" >> /etc/httpd/conf/httpd.conf
+            echo "<Directory \"/var/www/cgi-bin\">" >> /etc/httpd/conf/httpd.conf
+            echo "    AllowOverride None" >> /etc/httpd/conf/httpd.conf
+            echo "    Options +ExecCGI" >> /etc/httpd/conf/httpd.conf
+            echo "    AddHandler cgi-script .sh" >> /etc/httpd/conf/httpd.conf
+            echo "    Require all granted" >> /etc/httpd/conf/httpd.conf
+            echo "</Directory>" >> /etc/httpd/conf/httpd.conf
+
+            # Start and enable Apache
+            systemctl restart httpd
             systemctl enable httpd
-            
-            # Check Apache status
-            systemctl status httpd
 
 
   AutoScalingGroup:
