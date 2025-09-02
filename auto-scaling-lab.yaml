@@ -226,8 +226,14 @@ Resources:
             #!/bin/bash
             echo "Content-type: text/html"
             echo ""
+            echo "<html>"
+            echo "<head><title>CPU Stress Test</title></head>"
+            echo "<body>"
             echo "<h1>CPU Stress Test Initiated!</h1>"
-            echo "<p>Return to the previous page to see the effect.</p>"
+            echo "<p>Return to the <a href='/'>main page</a> to refresh and see scaling effects.</p>"
+            echo "</body>"
+            echo "</html>"
+            # Run stress in the background
             stress --cpu 2 --timeout 60 &
             EOF
 
