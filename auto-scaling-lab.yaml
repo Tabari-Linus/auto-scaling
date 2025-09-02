@@ -202,19 +202,12 @@ Resources:
         UserData:
           Fn::Base64: !Sub |
             #!/bin/bash
-            # Update and install packages
             yum update -y
             yum install -y httpd stress
-
-            # Enable and start Apache
             systemctl enable httpd
             systemctl start httpd
-
-            # Get instance metadata
             INSTANCE_ID=$(/usr/bin/curl -s http://169.254.169.254/latest/meta-data/instance-id)
             PRIVATE_IP=$(/usr/bin/curl -s http://169.254.169.254/latest/meta-data/local-ipv4)
-
-            # Create main index.html with correct IP and Instance ID
             cat > /var/www/html/index.html <<EOF
             <html>
             <head>
@@ -229,8 +222,7 @@ Resources:
             </body>
             </html>
             EOF
-
-            # Create CGI script for CPU stress
+            mkdir -p /var/www/cgi-bin/
             cat > /var/www/cgi-bin/stress.sh <<EOF
             #!/bin/bash
             echo "Content-type: text/html"
@@ -243,30 +235,18 @@ Resources:
             echo "<p><a href='/'>Return to the main page</a> to refresh and observe scaling effects.</p>"
             echo "</body>"
             echo "</html>"
-
-            # Run stress in background for 60 seconds using 2 CPU workers
             stress --cpu 2 --timeout 60 &
             EOF
-
-            # Set permissions for CGI script
             chmod +x /var/www/cgi-bin/stress.sh
-
-            # Enable CGI module in Apache
             sed -i '/^#LoadModule cgi_module/s/^#//' /etc/httpd/conf/httpd.conf
             sed -i '/^#AddHandler cgi-script .cgi/s/^#//' /etc/httpd/conf/httpd.conf
             echo "AddHandler cgi-script .sh" >> /etc/httpd/conf/httpd.conf
-            
-            # Add new directory block to allow CGI execution
-            cat >> /etc/httpd/conf/httpd.conf <<EOF
-            ScriptInterpreterSource On
-            <Directory "/var/www/cgi-bin">
-                AllowOverride None
-                Options +ExecCGI
-                Require all granted
-            </Directory>
-            EOF
-
-            # Restart Apache to load new settings
+            echo "ScriptInterpreterSource On" >> /etc/httpd/conf/httpd.conf
+            echo "<Directory \"/var/www/cgi-bin\">" >> /etc/httpd/conf/httpd.conf
+            echo "    AllowOverride None" >> /etc/httpd/conf/httpd.conf
+            echo "    Options +ExecCGI" >> /etc/httpd/conf/httpd.conf
+            echo "    Require all granted" >> /etc/httpd/conf/httpd.conf
+            echo "</Directory>" >> /etc/httpd/conf/httpd.conf
             systemctl restart httpd
 
 
