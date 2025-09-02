@@ -204,32 +204,41 @@ Resources:
             #!/bin/bash
             yum update -y
             yum install -y httpd stress
-            systemctl start httpd
-            systemctl enable httpd
+            
             INSTANCE_ID=$(curl -s http://169.254.169.254/latest/meta-data/instance-id)
             IP_ADDRESS=$(curl -s http://169.254.169.254/latest/meta-data/local-ipv4)
+            
+            # Create the HTML page
             cat > /var/www/html/index.html <<EOF
             <html>
             <body>
             <h1>Hello from $IP_ADDRESS / $INSTANCE_ID</h1>
-            <form action="/stress" method="post">
+            <form action="/cgi-bin/stress.sh" method="post">
             <input type="submit" value="Stress CPU">
             </form>
             </body>
             </html>
             EOF
-            cat > /var/www/html/stress.sh <<EOF
+            
+            # Create a dedicated directory for CGI scripts
+            mkdir -p /var/www/cgi-bin
+            
+            # Create the CGI script in the new directory
+            cat > /var/www/cgi-bin/stress.sh <<EOF
             #!/bin/bash
+            echo "Content-type: text/plain"
+            echo ""
             stress --cpu 2 --timeout 60
             EOF
-            chmod +x /var/www/html/stress.sh
-            echo "CGIEnabled=true" >> /etc/httpd/conf/httpd.conf
-            echo "<Directory /var/www/html>" >> /etc/httpd/conf/httpd.conf
-            echo "Options +ExecCGI" >> /etc/httpd/conf/httpd.conf
-            echo "AddHandler cgi-script .sh" >> /etc/httpd/conf/httpd.conf
-            echo "</Directory>" >> /etc/httpd/conf/httpd.conf
-            sleep 30
-            systemctl restart httpd
+            
+            chmod +x /var/www/cgi-bin/stress.sh
+            
+            # Start and enable the Apache service
+            systemctl start httpd
+            systemctl enable httpd
+            
+            # Check Apache status
+            systemctl status httpd
 
 
   AutoScalingGroup:
