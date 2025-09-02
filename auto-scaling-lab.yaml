@@ -204,73 +204,49 @@ Resources:
             #!/bin/bash
             yum update -y
             yum install -y httpd stress
-            
-            # Enable and start Apache
             systemctl enable httpd
             systemctl start httpd
+            INSTANCE_ID=$(curl -s http://169.254.169.254/latest/meta-data/instance-id)
+            PRIVATE_IP=$(curl -s http://169.254.169.254/latest/meta-data/local-ipv4)
             
-            # Get instance metadata to populate the webpage
-            INSTANCE_ID=$(/usr/bin/curl -s http://169.254.169.254/latest/meta-data/instance-id)
-            PRIVATE_IP=$(/usr/bin/curl -s http://169.254.169.254/latest/meta-data/local-ipv4)
-            
-            # Create main index.html file
-            cat > /var/www/html/index.html <<EOF
+            # Create index.html with proper HTML structure
+            cat <<EOF > /var/www/html/index.html
             <html>
-            <head>
-              <title>Auto Scaling Group Lab</title>
-            </head>
-            <body style="font-family: Arial, sans-serif; text-align: center; margin-top: 50px;">
-              <h1>Welcome to the Auto Scaling Group Lab</h1>
-              <p>Hello from <strong>$PRIVATE_IP</strong> / <strong>$INSTANCE_ID</strong></p>
-              <form action="/cgi-bin/stress.sh" method="GET">
-                <button type="submit" style="padding:10px 20px; font-size:16px;">Stress CPU</button>
-              </form>
+            <head><title>Welcome to the Auto Scaling Group Lab</title></head>
+            <body>
+              <h1>Hello from $PRIVATE_IP / $INSTANCE_ID</h1>
+              <button onclick="window.location.href='/cgi-bin/stress.sh'">Stress CPU</button>
             </body>
             </html>
             EOF
             
-            # Create the cgi-bin directory if it doesn't exist
+            # Create CGI directory and stress.sh with HTTP headers
             mkdir -p /var/www/cgi-bin/
-            
-            # Create the CPU stress test CGI script
-            cat > /var/www/cgi-bin/stress.sh <<EOF
+            cat <<EOF > /var/www/cgi-bin/stress.sh
             #!/bin/bash
             echo "Content-type: text/html"
             echo ""
-            cat <<HTML_END
-            <html>
-            <head><title>CPU Stress Test</title></head>
-            <body style='font-family: Arial, sans-serif; text-align: center; margin-top: 50px;'>
-            <h1>CPU Stress Test Initiated!</h1>
-            <p>The instance <strong>$INSTANCE_ID</strong> is now running a stress test.</p>
-            <p><a href='/'>Return to the main page</a> to refresh and observe scaling effects.</p>
-            </body>
-            </html>
-            HTML_END
-            
-            # Run stress in background for 60 seconds
-            stress --cpu 2 --timeout 60 &
+            echo "<html>"
+            echo "<body>"
+            echo "<h1>CPU Stress Test Initiated!</h1>"
+            echo "<p>The instance $INSTANCE_ID is now running a stress test.</p>"
+            echo "<p>Return to the main page to refresh and observe scaling effects.</p>"
+            echo "</body>"
+            echo "</html>"
+            stress --cpu 2 --timeout 300 &  # Longer timeout for reliable triggering
             EOF
             
-            # Set executable permissions for the script
             chmod +x /var/www/cgi-bin/stress.sh
             
-            # Configure Apache for CGI
+            # Enable CGI in Apache config
             sed -i '/^#LoadModule cgi_module/s/^#//' /etc/httpd/conf/httpd.conf
             sed -i '/^#AddHandler cgi-script .cgi/s/^#//' /etc/httpd/conf/httpd.conf
-            
             echo "AddHandler cgi-script .sh" >> /etc/httpd/conf/httpd.conf
-            
-            cat >> /etc/httpd/conf/httpd.conf <<EOF
-            ScriptInterpreterSource On
-            <Directory "/var/www/cgi-bin">
-                AllowOverride None
-                Options +ExecCGI
-                Require all granted
-            </Directory>
-            EOF
-            
-            # Restart Apache to apply all changes
+            echo "<Directory /var/www/cgi-bin>" >> /etc/httpd/conf/httpd.conf
+            echo "    AllowOverride None" >> /etc/httpd/conf/httpd.conf
+            echo "    Options +ExecCGI" >> /etc/httpd/conf/httpd.conf
+            echo "    Require all granted" >> /etc/httpd/conf/httpd.conf
+            echo "</Directory>" >> /etc/httpd/conf/httpd.conf
             systemctl restart httpd
 
 
