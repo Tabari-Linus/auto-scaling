@@ -206,16 +206,19 @@ Resources:
             # Create cgi-bin directory
             mkdir -p /var/www/cgi-bin
 
-            # CPU stress script
+            # CPU stress script - more aggressive stress test
             cat > /var/www/cgi-bin/stress.sh << 'EOF'
             #!/bin/bash
             echo "Content-type: text/html"
             echo ""
-            # Start CPU stress for 60 seconds using 2 cores
-            stress --cpu 2 --timeout 60 &
-            echo "<html><body><h2>CPU stress started on this instance for 60 seconds</h2>"
-            echo "<p>Instance: $(hostname)</p>"
-            echo "<p>IP: $(curl -s http://169.254.169.254/latest/meta-data/local-ipv4)</p></body></html>"
+            # Start intensive CPU stress using all available cores for 120 seconds
+            stress --cpu $(nproc) --timeout 120 &
+            echo "<html><body>"
+            echo "<h2>✅ CPU stress started!</h2>"
+            echo "<p>Running on all $(nproc) cores for 120 seconds</p>"
+            echo "<p>Instance: $(curl -s http://169.254.169.254/latest/meta-data/instance-id)</p>"
+            echo "<p>This should trigger auto-scaling when CPU > 50%</p>"
+            echo "</body></html>"
             EOF
 
             # Stop stress script
@@ -224,186 +227,85 @@ Resources:
             echo "Content-type: text/html"
             echo ""
             pkill -f stress
-            echo "<html><body><h2>CPU stress stopped on this instance</h2>"
-            echo "<p>Instance: $(hostname)</p></body></html>"
-            EOF
-
-            # Status script
-            cat > /var/www/cgi-bin/status.sh << 'EOF'
-            #!/bin/bash
-            echo "Content-type: text/html"
-            echo ""
-            echo "<html><body><h2>Instance Status</h2>"
-            echo "<p>Instance ID: $(curl -s http://169.254.169.254/latest/meta-data/instance-id)</p>"
-            echo "<p>IP Address: $(curl -s http://169.254.169.254/latest/meta-data/local-ipv4)</p>"
-            echo "<p>CPU Load: $(uptime | awk -F'load average:' '{print $2}')</p>"
+            echo "<html><body>"
+            echo "<h2>🛑 CPU stress stopped</h2>"
+            echo "<p>Instance: $(curl -s http://169.254.169.254/latest/meta-data/instance-id)</p>"
             echo "</body></html>"
             EOF
 
             chmod +x /var/www/cgi-bin/*.sh
 
-            # Build index page with enhanced UI
+            # Get instance metadata
             TOKEN=$(curl -X PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 21600" -s)
             META_IP=$(curl -H "X-aws-ec2-metadata-token: $TOKEN" -s http://169.254.169.254/latest/meta-data/local-ipv4)
             META_ID=$(curl -H "X-aws-ec2-metadata-token: $TOKEN" -s http://169.254.169.254/latest/meta-data/instance-id)
             AZ=$(curl -H "X-aws-ec2-metadata-token: $TOKEN" -s http://169.254.169.254/latest/meta-data/placement/availability-zone)
 
+            # Simple index page
             cat > /var/www/html/index.html << EOF
             <!DOCTYPE html>
-            <html lang="en">
+            <html>
             <head>
-                <meta charset="UTF-8">
-                <meta name="viewport" content="width=device-width, initial-scale=1.0">
                 <title>Auto Scaling Lab</title>
                 <style>
-                    body {
-                        font-family: Arial, sans-serif;
-                        max-width: 800px;
-                        margin: 0 auto;
-                        padding: 20px;
-                        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-                        color: white;
-                    }
-                    .container {
-                        background: rgba(255, 255, 255, 0.1);
-                        padding: 30px;
-                        border-radius: 15px;
-                        backdrop-filter: blur(10px);
-                    }
-                    h1 {
-                        text-align: center;
-                        margin-bottom: 30px;
-                    }
-                    .instance-info {
-                        background: rgba(255, 255, 255, 0.2);
-                        padding: 20px;
-                        border-radius: 10px;
-                        margin-bottom: 20px;
-                    }
-                    .controls {
-                        display: flex;
-                        gap: 15px;
-                        justify-content: center;
-                        margin: 30px 0;
-                    }
-                    button {
-                        padding: 15px 30px;
-                        border: none;
-                        border-radius: 8px;
-                        background: #4CAF50;
-                        color: white;
-                        font-size: 16px;
-                        cursor: pointer;
-                        transition: background 0.3s;
-                    }
-                    button:hover {
-                        background: #45a049;
-                    }
-                    button.stop {
-                        background: #f44336;
-                    }
-                    button.stop:hover {
-                        background: #da190b;
-                    }
-                    #result {
-                        background: rgba(255, 255, 255, 0.2);
-                        padding: 20px;
-                        border-radius: 10px;
-                        min-height: 100px;
-                    }
-                    .stats {
-                        display: grid;
-                        grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-                        gap: 15px;
-                        margin-top: 20px;
-                    }
-                    .stat-box {
-                        background: rgba(255, 255, 255, 0.2);
-                        padding: 15px;
-                        border-radius: 8px;
-                        text-align: center;
-                    }
+                    body { font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; }
+                    .container { background: #f5f5f5; padding: 20px; border-radius: 10px; }
+                    h1 { color: #333; text-align: center; }
+                    .info { background: white; padding: 15px; border-radius: 5px; margin: 10px 0; }
+                    button { padding: 10px 20px; margin: 5px; border: none; border-radius: 5px; cursor: pointer; }
+                    .stress { background: #ff4444; color: white; }
+                    .stop { background: #444; color: white; }
+                    #result { background: white; padding: 15px; border-radius: 5px; margin: 10px 0; min-height: 50px; }
                 </style>
             </head>
             <body>
                 <div class="container">
-                    <h1>🚀 Auto Scaling Lab</h1>
+                    <h1>Auto Scaling Lab</h1>
                     
-                    <div class="instance-info">
-                        <h2>Instance Information</h2>
-                        <p><strong>IP Address:</strong> $META_IP</p>
-                        <p><strong>Instance ID:</strong> $META_ID</p>
-                        <p><strong>Availability Zone:</strong> $AZ</p>
+                    <div class="info">
+                        <strong>Instance:</strong> $META_ID<br>
+                        <strong>IP:</strong> $META_IP<br>
+                        <strong>AZ:</strong> $AZ
                     </div>
 
-                    <div class="controls">
-                        <button id="stressBtn" onclick="runStress()">🔥 Start CPU Stress</button>
-                        <button id="stopBtn" class="stop" onclick="stopStress()">🛑 Stop CPU Stress</button>
-                        <button id="statusBtn" onclick="checkStatus()">📊 Check Status</button>
+                    <div>
+                        <button class="stress" onclick="runStress()">Start CPU Stress</button>
+                        <button class="stop" onclick="stopStress()">Stop CPU Stress</button>
                     </div>
 
-                    <div id="result"></div>
+                    <div id="result">Click buttons to test auto-scaling</div>
 
-                    <div class="stats">
-                        <div class="stat-box">
-                            <h3>ASG Stats</h3>
-                            <p>Min: 1 instance</p>
-                            <p>Desired: 1 instance</p>
-                            <p>Max: 4 instances</p>
-                        </div>
-                        <div class="stat-box">
-                            <h3>Scaling Policy</h3>
-                            <p>Scale Out: >50% CPU</p>
-                            <p>Scale In: <30% CPU</p>
-                        </div>
+                    <div class="info">
+                        <strong>ASG Settings:</strong><br>
+                        Min: 1 instance | Desired: 1 | Max: 4 instances<br>
+                        Scale Out: CPU > 50% | Scale In: CPU < 30%
                     </div>
                 </div>
 
                 <script>
                     function runStress() {
-                        showLoading('Starting CPU stress...');
+                        document.getElementById('result').innerHTML = 'Starting CPU stress...';
                         fetch('/cgi-bin/stress.sh')
                             .then(r => r.text())
                             .then(t => { 
-                                document.getElementById('result').innerHTML = '<div style="color: #4CAF50;">' + t + '</div>';
+                                document.getElementById('result').innerHTML = t;
                             })
                             .catch(e => { 
-                                document.getElementById('result').innerHTML = '<div style="color: #f44336;">Error: ' + e + '</div>';
+                                document.getElementById('result').innerHTML = 'Error: ' + e;
                             });
                     }
 
                     function stopStress() {
-                        showLoading('Stopping CPU stress...');
+                        document.getElementById('result').innerHTML = 'Stopping CPU stress...';
                         fetch('/cgi-bin/stop-stress.sh')
                             .then(r => r.text())
                             .then(t => { 
-                                document.getElementById('result').innerHTML = '<div style="color: #f44336;">' + t + '</div>';
+                                document.getElementById('result').innerHTML = t;
                             })
                             .catch(e => { 
-                                document.getElementById('result').innerHTML = '<div style="color: #f44336;">Error: ' + e + '</div>';
+                                document.getElementById('result').innerHTML = 'Error: ' + e;
                             });
                     }
-
-                    function checkStatus() {
-                        showLoading('Checking instance status...');
-                        fetch('/cgi-bin/status.sh')
-                            .then(r => r.text())
-                            .then(t => { 
-                                document.getElementById('result').innerHTML = '<div style="color: #2196F3;">' + t + '</div>';
-                            })
-                            .catch(e => { 
-                                document.getElementById('result').innerHTML = '<div style="color: #f44336;">Error: ' + e + '</div>';
-                            });
-                    }
-
-                    function showLoading(message) {
-                        document.getElementById('result').innerHTML = '<div style="text-align: center; padding: 20px;">⏳ ' + message + '</div>';
-                    }
-
-                    // Auto-refresh page every 30 seconds to show load balancer distribution
-                    setTimeout(() => {
-                        window.location.reload();
-                    }, 30000);
                 </script>
             </body>
             </html>
@@ -487,7 +389,7 @@ Resources:
   CPUAlarmLow:
     Type: AWS::CloudWatch::Alarm
     Properties:
-      EvaluationPeriods: 2
+      EvaluationPeriods: 5
       Statistic: Average
       Threshold: 30
       AlarmDescription: Scale in when CPU utilization drops below 30%
@@ -539,7 +441,7 @@ Outputs:
     Value: !GetAtt LoadBalancer.DNSName
   GitHubRepo:
     Description: GitHub Repository URL
-    Value: !Sub https://github.com/Tabari-Linus/auto-scaling
+    Value: !Sub https://github.com/Tabari-Linus/auto-scaling.git
   AutoScalingGroupName:
     Description: Auto Scaling Group Name
     Value: !Ref AutoScalingGroup
