@@ -206,18 +206,30 @@ Resources:
             # Create cgi-bin directory
             mkdir -p /var/www/cgi-bin
 
-            # CPU stress script - more aggressive stress test
+            # CPU stress script - MUCH more aggressive
             cat > /var/www/cgi-bin/stress.sh << 'EOF'
             #!/bin/bash
             echo "Content-type: text/html"
             echo ""
-            # Start intensive CPU stress using all available cores for 120 seconds
-            stress --cpu $(nproc) --timeout 120 &
+            
+            # Kill any existing stress processes
+            pkill -f stress 2>/dev/null || true
+            
+            # Start EXTREMELY aggressive CPU stress using all available cores indefinitely
+            # Using multiple stress commands to ensure maximum load
+            stress --cpu $(nproc) --timeout 300 &
+            stress --cpu $(nproc) --timeout 300 &
+            
+            # Additional CPU intensive operations
+            for i in {1..4}; do
+                dd if=/dev/zero of=/dev/null bs=1M &
+            done
+            
             echo "<html><body>"
-            echo "<h2>✅ CPU stress started!</h2>"
-            echo "<p>Running on all $(nproc) cores for 120 seconds</p>"
+            echo "<h2>🔥 EXTREME CPU stress started!</h2>"
+            echo "<p>Using ALL $(nproc) cores aggressively</p>"
             echo "<p>Instance: $(curl -s http://169.254.169.254/latest/meta-data/instance-id)</p>"
-            echo "<p>This should trigger auto-scaling when CPU > 50%</p>"
+            echo "<p>This should DEFINITELY trigger auto-scaling (CPU > 50%)</p>"
             echo "</body></html>"
             EOF
 
@@ -226,9 +238,32 @@ Resources:
             #!/bin/bash
             echo "Content-type: text/html"
             echo ""
+            
+            # Kill ALL stress-related processes aggressively
             pkill -f stress
+            pkill -f dd
+            pkill -f "yes >/dev/null"
+            
             echo "<html><body>"
-            echo "<h2>🛑 CPU stress stopped</h2>"
+            echo "<h2>🛑 ALL CPU stress stopped</h2>"
+            echo "<p>Instance: $(curl -s http://169.254.169.254/latest/meta-data/instance-id)</p>"
+            echo "</body></html>"
+            EOF
+
+            # Additional script for continuous maximum stress
+            cat > /var/www/cgi-bin/max-stress.sh << 'EOF'
+            #!/bin/bash
+            echo "Content-type: text/html"
+            echo ""
+            
+            # Maximum possible CPU stress
+            while true; do
+                : > /dev/null
+            done &
+            
+            echo "<html><body>"
+            echo "<h2>💥 MAXIMUM CPU stress started!</h2>"
+            echo "<p>Infinite loop stress - will run until stopped</p>"
             echo "<p>Instance: $(curl -s http://169.254.169.254/latest/meta-data/instance-id)</p>"
             echo "</body></html>"
             EOF
@@ -241,7 +276,7 @@ Resources:
             META_ID=$(curl -H "X-aws-ec2-metadata-token: $TOKEN" -s http://169.254.169.254/latest/meta-data/instance-id)
             AZ=$(curl -H "X-aws-ec2-metadata-token: $TOKEN" -s http://169.254.169.254/latest/meta-data/placement/availability-zone)
 
-            # Simple index page
+            # Simple index page with multiple stress options
             cat > /var/www/html/index.html << EOF
             <!DOCTYPE html>
             <html>
@@ -254,6 +289,7 @@ Resources:
                     .info { background: white; padding: 15px; border-radius: 5px; margin: 10px 0; }
                     button { padding: 10px 20px; margin: 5px; border: none; border-radius: 5px; cursor: pointer; }
                     .stress { background: #ff4444; color: white; }
+                    .max-stress { background: #aa0000; color: white; }
                     .stop { background: #444; color: white; }
                     #result { background: white; padding: 15px; border-radius: 5px; margin: 10px 0; min-height: 50px; }
                 </style>
@@ -270,7 +306,8 @@ Resources:
 
                     <div>
                         <button class="stress" onclick="runStress()">Start CPU Stress</button>
-                        <button class="stop" onclick="stopStress()">Stop CPU Stress</button>
+                        <button class="max-stress" onclick="runMaxStress()">MAXIMUM Stress</button>
+                        <button class="stop" onclick="stopStress()">Stop All Stress</button>
                     </div>
 
                     <div id="result">Click buttons to test auto-scaling</div>
@@ -284,7 +321,7 @@ Resources:
 
                 <script>
                     function runStress() {
-                        document.getElementById('result').innerHTML = 'Starting CPU stress...';
+                        document.getElementById('result').innerHTML = 'Starting aggressive CPU stress...';
                         fetch('/cgi-bin/stress.sh')
                             .then(r => r.text())
                             .then(t => { 
@@ -295,8 +332,20 @@ Resources:
                             });
                     }
 
+                    function runMaxStress() {
+                        document.getElementById('result').innerHTML = 'Starting MAXIMUM CPU stress (be careful!)...';
+                        fetch('/cgi-bin/max-stress.sh')
+                            .then(r => r.text())
+                            .then(t => { 
+                                document.getElementById('result').innerHTML = t;
+                            })
+                            .catch(e => { 
+                                document.getElementById('result').innerHTML = 'Error: ' + e;
+                            });
+                    }
+
                     function stopStress() {
-                        document.getElementById('result').innerHTML = 'Stopping CPU stress...';
+                        document.getElementById('result').innerHTML = 'Stopping all CPU stress...';
                         fetch('/cgi-bin/stop-stress.sh')
                             .then(r => r.text())
                             .then(t => { 
@@ -329,7 +378,7 @@ Resources:
             # Enable and start services
             systemctl enable httpd
             systemctl start httpd
-
+            
   AutoScalingGroup:
     Type: AWS::AutoScaling::AutoScalingGroup
     Properties:
