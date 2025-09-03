@@ -201,11 +201,10 @@ Resources:
             # Log output to CloudWatch and file
             exec > >(tee /var/log/user-data.log|logger -t user-data -s 2>/dev/console) 2>&1
             
-            # Install EPEL and stress-ng
-            yum install -y epel-release
-            yum install -y httpd stress-ng
+            # Install EPEL and httpd
+            yum install -y httpd
             if [ $? -ne 0 ]; then
-              echo "ERROR: Failed to install httpd or stress-ng" >> /var/log/user-data.log
+              echo "ERROR: Failed to install httpd" >> /var/log/user-data.log
               exit 1
             fi
             
@@ -215,51 +214,74 @@ Resources:
             # Disable SELinux for lab (not prod)
             setenforce 0 || true
             
-            INSTANCE_ID=$(curl -s http://169.254.169.254/latest/meta-data/instance-id)
-            PRIVATE_IP=$(curl -s http://169.254.169.254/latest/meta-data/local-ipv4)
+            # Get Instance Metadata
+            TOKEN=$(curl -X PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 21600" -s)
+            PRIVATE_IP=$(curl -H "X-aws-ec2-metadata-token: $TOKEN" -s http://169.254.169.254/latest/meta-data/local-ipv4)
+            INSTANCE_ID=$(curl -H "X-aws-ec2-metadata-token: $TOKEN" -s http://169.254.169.254/latest/meta-data/instance-id)
             
-            # Create index.html
+            # Create the cgi-bin directory
+            mkdir -p /var/www/cgi-bin/
+            
+            # Create the CPU stress test CGI script using 'yes'
+            cat <<'EOF' > /var/www/cgi-bin/stress.sh
+            #!/bin/bash
+            # Start two background CPU burners using yes
+            nohup bash -c 'yes > /dev/null &' >/dev/null 2>&1
+            nohup bash -c 'yes > /dev/null &' >/dev/null 2>&1
+            echo -e "Content-type: text/html\n\n<html><body><h2>CPU stress started on this instance</h2></body></html>"
+            EOF
+            
+            chmod +x /var/www/cgi-bin/stress.sh
+            
+            # Create the CPU stop CGI script
+            cat <<'EOF' > /var/www/cgi-bin/stop-stress.sh
+            #!/bin/bash
+            # Kill all yes processes
+            sudo pkill -f "^yes"
+            echo -e "Content-type: text/html\n\n<html><body><h2>CPU stress stopped on this instance</h2></body></html>"
+            EOF
+            
+            chmod +x /var/www/cgi-bin/stop-stress.sh
+            
+            # Create index.html with JavaScript to handle stress button
             cat <<EOF > /var/www/html/index.html
             <!DOCTYPE html>
             <html>
             <head><title>Auto Scaling Lab</title></head>
-            <body>
+            <body style="font-family: Arial, sans-serif; text-align: center; margin-top: 50px;">
               <h1>Hello from $PRIVATE_IP / $INSTANCE_ID</h1>
-              <button onclick="window.location.href='/cgi-bin/stress.sh'">Stress CPU</button>
+              <button id="stressBtn">Start CPU Stress</button>
+              <button id="stopBtn">Stop CPU Stress</button>
+              <div id="result"></div>
+              <script>
+                document.getElementById('stressBtn').addEventListener('click', function() {
+                  fetch('/cgi-bin/stress.sh')
+                    .then(r => r.text())
+                    .then(t => { document.getElementById('result').innerHTML = '<pre>' + t + '</pre>'; })
+                    .catch(e => { document.getElementById('result').innerText = 'Error: ' + e; });
+                });
+                document.getElementById('stopBtn').addEventListener('click', function() {
+                  fetch('/cgi-bin/stop-stress.sh')
+                    .then(r => r.text())
+                    .then(t => { document.getElementById('result').innerHTML = '<pre>' + t + '</pre>'; })
+                    .catch(e => { document.getElementById('result').innerText = 'Error: ' + e; });
+                });
+              </script>
             </body>
             </html>
             EOF
             
-            # Create CGI script
-            mkdir -p /var/www/cgi-bin/
-            cat <<EOF > /var/www/cgi-bin/stress.sh
-            #!/bin/bash
-            echo "Content-type: text/html"
-            echo ""
-            echo "<!DOCTYPE html>"
-            echo "<html>"
-            echo "<head><title>Stress Test</title></head>"
-            echo "<body>"
-            echo "<h1>CPU Stress Test Initiated!</h1>"
-            echo "<p>Instance: $INSTANCE_ID</p>"
-            echo "<p>Return to <a href='/'>main page</a> to observe scaling.</p>"
-            echo "</body>"
-            echo "</html>"
-            stress-ng --cpu 4 --timeout 300s || echo "ERROR: stress-ng failed" >> /var/log/user-data.log &
+            # Configure Apache for CGI
+            cat <<'EOF' > /etc/httpd/conf.d/cgi.conf
+            ScriptAlias /cgi-bin/ "/var/www/cgi-bin/"
+            <Directory "/var/www/cgi-bin">
+                AllowOverride None
+                Options +ExecCGI
+                Require all granted
+            </Directory>
             EOF
             
-            chmod +x /var/www/cgi-bin/stress.sh
-            chown apache:apache /var/www/cgi-bin/stress.sh
-            
-            # Configure Apache for CGI
-            sed -i '/^#LoadModule cgi_module/s/^#//' /etc/httpd/conf/httpd.conf
-            sed -i '/^#AddHandler cgi-script .cgi/s/^#//' /etc/httpd/conf/httpd.conf
-            echo "AddHandler cgi-script .sh" >> /etc/httpd/conf/httpd.conf
-            echo "<Directory /var/www/cgi-bin>" >> /etc/httpd/conf/httpd.conf
-            echo "    AllowOverride None" >> /etc/httpd/conf/httpd.conf
-            echo "    Options +ExecCGI" >> /etc/httpd/conf/httpd.conf
-            echo "    Require all granted" >> /etc/httpd/conf/httpd.conf
-            echo "</Directory>" >> /etc/httpd/conf/httpd.conf
+            chown -R apache:apache /var/www/html /var/www/cgi-bin
             
             systemctl restart httpd
             if [ $? -ne 0 ]; then
