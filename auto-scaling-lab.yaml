@@ -201,209 +201,68 @@ Resources:
           Fn::Base64: !Sub |
             #!/bin/bash -xe
             yum update -y
-            yum install -y httpd bc
+            yum install -y httpd
 
-            # Create cgi-bin directory
+            # Create cgi-bin directory for stress script
             mkdir -p /var/www/cgi-bin
 
-            # CPU stress script - Using mathematical calculations for maximum CPU load
+            # Simple CPU stress script
             cat > /var/www/cgi-bin/stress.sh << 'EOF'
             #!/bin/bash
             echo "Content-type: text/html"
             echo ""
             
-            # Kill any existing stress processes
-            pkill -f cpu_stress 2>/dev/null || true
-            
-            # Start EXTREME CPU stress using mathematical calculations
-            # This will push CPU to 100% guaranteed
-            for i in {1..4}; do
-                nohup bash -c '
-                  while true; do
-                    echo "scale=5000; 4*a(1)" | bc -l -q > /dev/null
-                  done
-                ' > /dev/null 2>&1 &
-            done
-            
-            # Additional CPU intensive task - calculating pi to high precision
-            nohup bash -c '
-              while true; do
-                echo "scale=10000; 4*a(1)" | bc -l -q > /dev/null
-              done
-            ' > /dev/null 2>&1 &
+            # Start CPU stress using yes commands
+            nohup bash -c 'yes > /dev/null &' >/dev/null 2>&1
+            nohup bash -c 'yes > /dev/null &' >/dev/null 2>&1
             
             echo "<html><body>"
-            echo "<h2>🔥 EXTREME CPU stress started!</h2>"
-            echo "<p>Running heavy mathematical calculations</p>"
+            echo "<h2>CPU stress started!</h2>"
             echo "<p>Instance: $(curl -s http://169.254.169.254/latest/meta-data/instance-id)</p>"
-            echo "<p>CPU should reach 100% and trigger auto-scaling</p>"
+            echo "<p>CPU should reach high utilization and trigger auto-scaling</p>"
             echo "</body></html>"
             EOF
 
-            # Alternative stress method using yes command
-            cat > /var/www/cgi-bin/stress2.sh << 'EOF'
-            #!/bin/bash
-            echo "Content-type: text/html"
-            echo ""
-            
-            # Kill any existing stress processes
-            pkill -f cpu_stress 2>/dev/null || true
-            
-            # Start multiple yes commands - very CPU intensive
-            for i in {1..8}; do
-                nohup yes > /dev/null &
-            done
-            
-            echo "<html><body>"
-            echo "<h2>🔥 YES command stress started!</h2>"
-            echo "<p>Running multiple 'yes' commands</p>"
-            echo "<p>Instance: $(curl -s http://169.254.169.254/latest/meta-data/instance-id)</p>"
-            echo "<p>This method should also reach 100% CPU</p>"
-            echo "</body></html>"
-            EOF
-
-            # Stop stress script - VERY aggressive
-            cat > /var/www/cgi-bin/stop-stress.sh << 'EOF'
-            #!/bin/bash
-            echo "Content-type: text/html"
-            echo ""
-            
-            # Kill ALL CPU-intensive processes
-            pkill -f yes
-            pkill -f bc
-            pkill -f "scale="
-            pkill -f "while true"
-            
-            # Force kill any remaining
-            killall yes 2>/dev/null || true
-            killall bc 2>/dev/null || true
-            
-            echo "<html><body>"
-            echo "<h2>🛑 ALL CPU stress stopped</h2>"
-            echo "<p>Instance: $(curl -s http://169.254.169.254/latest/meta-data/instance-id)</p>"
-            echo "</body></html>"
-            EOF
-
-            # Script to check current CPU usage
-            cat > /var/www/cgi-bin/status.sh << 'EOF'
-            #!/bin/bash
-            echo "Content-type: text/html"
-            echo ""
-            
-            CPU_USAGE=$(top -bn1 | grep "Cpu(s)" | awk '{print $2 + $4}')
-            LOAD_AVG=$(uptime | awk -F'load average:' '{print $2}')
-            PROCESSES=$(ps aux | grep -E "(yes|bc|scale)" | grep -v grep | wc -l)
-            
-            echo "<html><body>"
-            echo "<h2>📊 Current Status</h2>"
-            echo "<p>Instance: $(curl -s http://169.254.169.254/latest/meta-data/instance-id)</p>"
-            echo "<p>Current CPU Usage: $CPU_USAGE%</p>"
-            echo "<p>Load Average: $LOAD_AVG</p>"
-            echo "<p>Stress processes running: $PROCESSES</p>"
-            echo "</body></html>"
-            EOF
-
-            chmod +x /var/www/cgi-bin/*.sh
+            chmod +x /var/www/cgi-bin/stress.sh
 
             # Get instance metadata
             TOKEN=$(curl -X PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 21600" -s)
             META_IP=$(curl -H "X-aws-ec2-metadata-token: $TOKEN" -s http://169.254.169.254/latest/meta-data/local-ipv4)
             META_ID=$(curl -H "X-aws-ec2-metadata-token: $TOKEN" -s http://169.254.169.254/latest/meta-data/instance-id)
-            AZ=$(curl -H "X-aws-ec2-metadata-token: $TOKEN" -s http://169.254.169.254/latest/meta-data/placement/availability-zone)
 
-            # Simple index page with multiple stress options
+            # Create simple index page as per lab requirements
             cat > /var/www/html/index.html << EOF
             <!DOCTYPE html>
             <html>
             <head>
                 <title>Auto Scaling Lab</title>
                 <style>
-                    body { font-family: Arial, sans-serif; max-width: 700px; margin: 0 auto; padding: 20px; }
-                    .container { background: #f5f5f5; padding: 20px; border-radius: 10px; }
+                    body { font-family: Arial, sans-serif; max-width: 600px; margin: 50px auto; padding: 20px; }
                     h1 { color: #333; text-align: center; }
-                    .info { background: white; padding: 15px; border-radius: 5px; margin: 10px 0; }
-                    button { padding: 12px 24px; margin: 8px; border: none; border-radius: 5px; cursor: pointer; font-size: 14px; }
-                    .stress { background: #ff4444; color: white; }
-                    .stress2 { background: #ff0000; color: white; }
-                    .stop { background: #444; color: white; }
-                    .status { background: #007bff; color: white; }
-                    #result { background: white; padding: 15px; border-radius: 5px; margin: 10px 0; min-height: 80px; }
+                    button { padding: 15px 30px; font-size: 16px; background: #007bff; color: white; border: none; border-radius: 5px; cursor: pointer; }
+                    button:hover { background: #0056b3; }
+                    #result { margin-top: 20px; padding: 15px; background: #f8f9fa; border-radius: 5px; }
                 </style>
             </head>
             <body>
-                <div class="container">
-                    <h1>🚀 Auto Scaling Lab - CPU Stress Test</h1>
-                    
-                    <div class="info">
-                        <strong>Instance:</strong> $META_ID<br>
-                        <strong>IP:</strong> $META_IP<br>
-                        <strong>AZ:</strong> $AZ
-                    </div>
-
-                    <div>
-                        <button class="stress" onclick="runStress()">Method 1: Math Calculations</button>
-                        <button class="stress2" onclick="runStress2()">Method 2: YES Commands</button>
-                        <button class="stop" onclick="stopStress()">Stop All Stress</button>
-                        <button class="status" onclick="checkStatus()">Check Status</button>
-                    </div>
-
-                    <div id="result">Click a button to test auto-scaling. Try Method 1 first.</div>
-
-                    <div class="info">
-                        <strong>ASG Settings:</strong><br>
-                        • Min: 1 instance | Desired: 1 | Max: 4 instances<br>
-                        • Scale Out: CPU > 50% for 2 minutes<br>
-                        • Scale In: CPU < 30% for 5 minutes<br>
-                        • Target: Push CPU to 100% to trigger scaling
-                    </div>
+                <h1>Hello from $META_IP / $META_ID</h1>
+                
+                <div style="text-align: center;">
+                    <button onclick="stressTest()">Start CPU Stress Test</button>
                 </div>
 
+                <div id="result"></div>
+
                 <script>
-                    function runStress() {
-                        document.getElementById('result').innerHTML = 'Starting Method 1: Heavy math calculations (π to 10,000 digits)...';
+                    function stressTest() {
+                        document.getElementById('result').innerHTML = 'Starting CPU stress test...';
                         fetch('/cgi-bin/stress.sh')
-                            .then(r => r.text())
-                            .then(t => { 
-                                document.getElementById('result').innerHTML = t + '<br><br>Wait 1-2 minutes, then check CloudWatch metrics.';
+                            .then(response => response.text())
+                            .then(data => {
+                                document.getElementById('result').innerHTML = data;
                             })
-                            .catch(e => { 
-                                document.getElementById('result').innerHTML = 'Error: ' + e;
-                            });
-                    }
-
-                    function runStress2() {
-                        document.getElementById('result').innerHTML = 'Starting Method 2: Multiple YES commands...';
-                        fetch('/cgi-bin/stress2.sh')
-                            .then(r => r.text())
-                            .then(t => { 
-                                document.getElementById('result').innerHTML = t + '<br><br>Wait 1-2 minutes, then check CloudWatch metrics.';
-                            })
-                            .catch(e => { 
-                                document.getElementById('result').innerHTML = 'Error: ' + e;
-                            });
-                    }
-
-                    function stopStress() {
-                        document.getElementById('result').innerHTML = 'Stopping all CPU stress processes...';
-                        fetch('/cgi-bin/stop-stress.sh')
-                            .then(r => r.text())
-                            .then(t => { 
-                                document.getElementById('result').innerHTML = t;
-                            })
-                            .catch(e => { 
-                                document.getElementById('result').innerHTML = 'Error: ' + e;
-                            });
-                    }
-
-                    function checkStatus() {
-                        document.getElementById('result').innerHTML = 'Checking current CPU status...';
-                        fetch('/cgi-bin/status.sh')
-                            .then(r => r.text())
-                            .then(t => { 
-                                document.getElementById('result').innerHTML = t;
-                            })
-                            .catch(e => { 
-                                document.getElementById('result').innerHTML = 'Error: ' + e;
+                            .catch(error => {
+                                document.getElementById('result').innerHTML = 'Error: ' + error;
                             });
                     }
                 </script>
@@ -451,57 +310,17 @@ Resources:
           Value: AutoScalingInstance
           PropagateAtLaunch: true
 
-  ScaleOutPolicy:
+  # Use Target Tracking Scaling Policy (more reliable than simple scaling)
+  CPUTargetTrackingPolicy:
     Type: AWS::AutoScaling::ScalingPolicy
     Properties:
       AutoScalingGroupName: !Ref AutoScalingGroup
-      PolicyType: SimpleScaling
-      ScalingAdjustment: 1
-      AdjustmentType: ChangeInCapacity
-      Cooldown: 300
-
-  ScaleInPolicy:
-    Type: AWS::AutoScaling::ScalingPolicy
-    Properties:
-      AutoScalingGroupName: !Ref AutoScalingGroup
-      PolicyType: SimpleScaling
-      ScalingAdjustment: -1
-      AdjustmentType: ChangeInCapacity
-      Cooldown: 300
-
-  CPUAlarmHigh:
-    Type: AWS::CloudWatch::Alarm
-    Properties:
-      EvaluationPeriods: 2
-      Statistic: Average
-      Threshold: 50
-      AlarmDescription: Scale out when CPU utilization exceeds 50%
-      Period: 60
-      Namespace: AWS/EC2
-      MetricName: CPUUtilization
-      ComparisonOperator: GreaterThanThreshold
-      Dimensions:
-        - Name: AutoScalingGroupName
-          Value: !Ref AutoScalingGroup
-      AlarmActions:
-        - !Ref ScaleOutPolicy
-
-  CPUAlarmLow:
-    Type: AWS::CloudWatch::Alarm
-    Properties:
-      EvaluationPeriods: 5
-      Statistic: Average
-      Threshold: 30
-      AlarmDescription: Scale in when CPU utilization drops below 30%
-      Period: 60
-      Namespace: AWS/EC2
-      MetricName: CPUUtilization
-      ComparisonOperator: LessThanThreshold
-      Dimensions:
-        - Name: AutoScalingGroupName
-          Value: !Ref AutoScalingGroup
-      AlarmActions:
-        - !Ref ScaleInPolicy
+      PolicyType: TargetTrackingScaling
+      TargetTrackingConfiguration:
+        PredefinedMetricSpecification:
+          PredefinedMetricType: ASGAverageCPUUtilization
+        TargetValue: 30.0
+        DisableScaleIn: false
 
   TargetGroup:
     Type: AWS::ElasticLoadBalancingV2::TargetGroup
