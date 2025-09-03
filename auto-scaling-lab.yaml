@@ -1,7 +1,7 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Description: >
   This template deploys a highly available, auto-scaling Apache web application
-  in a VPC. It includes an Application Load Balancer and a CPU-based scaling policy.
+  in a VPC. It includes an Application Load Balancer and CPU-based scaling policies.
 
 Parameters:
   VpcCidr:
@@ -145,16 +145,10 @@ Resources:
             Principal:
               Service: ec2.amazonaws.com
             Action: sts:AssumeRole
-      Policies:
-        - PolicyName: EC2Policy
-          PolicyDocument:
-            Version: '2012-10-17'
-            Statement:
-              - Effect: Allow
-                Action:
-                  - ec2:DescribeInstances
-                  - cloudwatch:PutMetricData
-                Resource: '*'
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+        - arn:aws:iam::aws:policy/CloudWatchAgentServerPolicy
+
   EC2InstanceProfile:
     Type: AWS::IAM::InstanceProfile
     Properties:
@@ -171,6 +165,10 @@ Resources:
           FromPort: 80
           ToPort: 80
           CidrIp: 0.0.0.0/0
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          CidrIp: 0.0.0.0/0
+
   InstanceSecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
@@ -181,6 +179,10 @@ Resources:
           FromPort: 80
           ToPort: 80
           SourceSecurityGroupId: !Ref ALBSecurityGroup
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 0.0.0.0/0
       SecurityGroupEgress:
         - IpProtocol: -1
           CidrIp: 0.0.0.0/0
@@ -199,74 +201,230 @@ Resources:
           Fn::Base64: !Sub |
             #!/bin/bash -xe
             yum update -y
-            yum install -y httpd
-            
-            # create cgi-bin for CPU stress endpoints
+            yum install -y httpd stress
+
+            # Create cgi-bin directory
             mkdir -p /var/www/cgi-bin
-            
-            # start stress script
+
+            # CPU stress script
             cat > /var/www/cgi-bin/stress.sh << 'EOF'
             #!/bin/bash
-            # Start two background CPU burners using yes
-            nohup bash -c 'yes > /dev/null &' >/dev/null 2>&1
-            nohup bash -c 'yes > /dev/null &' >/dev/null 2>&1
-            echo -e "Content-type: text/html\n\n<html><body><h2>CPU stress started on this instance</h2></body></html>"
+            echo "Content-type: text/html"
+            echo ""
+            # Start CPU stress for 60 seconds using 2 cores
+            stress --cpu 2 --timeout 60 &
+            echo "<html><body><h2>CPU stress started on this instance for 60 seconds</h2>"
+            echo "<p>Instance: $(hostname)</p>"
+            echo "<p>IP: $(curl -s http://169.254.169.254/latest/meta-data/local-ipv4)</p></body></html>"
             EOF
-            chmod +x /var/www/cgi-bin/stress.sh
-            
-            # stop stress script
+
+            # Stop stress script
             cat > /var/www/cgi-bin/stop-stress.sh << 'EOF'
             #!/bin/bash
-            # Kill all yes processes
-            sudo pkill -f "^yes"
-            echo -e "Content-type: text/html\n\n<html><body><h2>CPU stress stopped on this instance</h2></body></html>"
+            echo "Content-type: text/html"
+            echo ""
+            pkill -f stress
+            echo "<html><body><h2>CPU stress stopped on this instance</h2>"
+            echo "<p>Instance: $(hostname)</p></body></html>"
             EOF
-            chmod +x /var/www/cgi-bin/stop-stress.sh
-            
-            # build index page
+
+            # Status script
+            cat > /var/www/cgi-bin/status.sh << 'EOF'
+            #!/bin/bash
+            echo "Content-type: text/html"
+            echo ""
+            echo "<html><body><h2>Instance Status</h2>"
+            echo "<p>Instance ID: $(curl -s http://169.254.169.254/latest/meta-data/instance-id)</p>"
+            echo "<p>IP Address: $(curl -s http://169.254.169.254/latest/meta-data/local-ipv4)</p>"
+            echo "<p>CPU Load: $(uptime | awk -F'load average:' '{print $2}')</p>"
+            echo "</body></html>"
+            EOF
+
+            chmod +x /var/www/cgi-bin/*.sh
+
+            # Build index page with enhanced UI
             TOKEN=$(curl -X PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 21600" -s)
             META_IP=$(curl -H "X-aws-ec2-metadata-token: $TOKEN" -s http://169.254.169.254/latest/meta-data/local-ipv4)
             META_ID=$(curl -H "X-aws-ec2-metadata-token: $TOKEN" -s http://169.254.169.254/latest/meta-data/instance-id)
-            
+            AZ=$(curl -H "X-aws-ec2-metadata-token: $TOKEN" -s http://169.254.169.254/latest/meta-data/placement/availability-zone)
+
             cat > /var/www/html/index.html << EOF
-            <!doctype html>
-            <html>
-            <head><title>ASG Lab</title></head>
+            <!DOCTYPE html>
+            <html lang="en">
+            <head>
+                <meta charset="UTF-8">
+                <meta name="viewport" content="width=device-width, initial-scale=1.0">
+                <title>Auto Scaling Lab</title>
+                <style>
+                    body {
+                        font-family: Arial, sans-serif;
+                        max-width: 800px;
+                        margin: 0 auto;
+                        padding: 20px;
+                        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                        color: white;
+                    }
+                    .container {
+                        background: rgba(255, 255, 255, 0.1);
+                        padding: 30px;
+                        border-radius: 15px;
+                        backdrop-filter: blur(10px);
+                    }
+                    h1 {
+                        text-align: center;
+                        margin-bottom: 30px;
+                    }
+                    .instance-info {
+                        background: rgba(255, 255, 255, 0.2);
+                        padding: 20px;
+                        border-radius: 10px;
+                        margin-bottom: 20px;
+                    }
+                    .controls {
+                        display: flex;
+                        gap: 15px;
+                        justify-content: center;
+                        margin: 30px 0;
+                    }
+                    button {
+                        padding: 15px 30px;
+                        border: none;
+                        border-radius: 8px;
+                        background: #4CAF50;
+                        color: white;
+                        font-size: 16px;
+                        cursor: pointer;
+                        transition: background 0.3s;
+                    }
+                    button:hover {
+                        background: #45a049;
+                    }
+                    button.stop {
+                        background: #f44336;
+                    }
+                    button.stop:hover {
+                        background: #da190b;
+                    }
+                    #result {
+                        background: rgba(255, 255, 255, 0.2);
+                        padding: 20px;
+                        border-radius: 10px;
+                        min-height: 100px;
+                    }
+                    .stats {
+                        display: grid;
+                        grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+                        gap: 15px;
+                        margin-top: 20px;
+                    }
+                    .stat-box {
+                        background: rgba(255, 255, 255, 0.2);
+                        padding: 15px;
+                        border-radius: 8px;
+                        text-align: center;
+                    }
+                </style>
+            </head>
             <body>
-              <h1>Hello from $META_IP / $META_ID</h1>
-              <button id="stressBtn">Start CPU Stress</button>
-              <button id="stopBtn">Stop CPU Stress</button>
-              <div id="result"></div>
-              <script>
-                document.getElementById('stressBtn').addEventListener('click', function() {
-                  fetch('/cgi-bin/stress.sh')
-                    .then(r => r.text())
-                    .then(t => { document.getElementById('result').innerHTML = '<pre>' + t + '</pre>'; })
-                    .catch(e => { document.getElementById('result').innerText = 'Error: ' + e; });
-                });
-                document.getElementById('stopBtn').addEventListener('click', function() {
-                  fetch('/cgi-bin/stop-stress.sh')
-                    .then(r => r.text())
-                    .then(t => { document.getElementById('result').innerHTML = '<pre>' + t + '</pre>'; })
-                    .catch(e => { document.getElementById('result').innerText = 'Error: ' + e; });
-                });
-              </script>
+                <div class="container">
+                    <h1>🚀 Auto Scaling Lab</h1>
+                    
+                    <div class="instance-info">
+                        <h2>Instance Information</h2>
+                        <p><strong>IP Address:</strong> $META_IP</p>
+                        <p><strong>Instance ID:</strong> $META_ID</p>
+                        <p><strong>Availability Zone:</strong> $AZ</p>
+                    </div>
+
+                    <div class="controls">
+                        <button id="stressBtn" onclick="runStress()">🔥 Start CPU Stress</button>
+                        <button id="stopBtn" class="stop" onclick="stopStress()">🛑 Stop CPU Stress</button>
+                        <button id="statusBtn" onclick="checkStatus()">📊 Check Status</button>
+                    </div>
+
+                    <div id="result"></div>
+
+                    <div class="stats">
+                        <div class="stat-box">
+                            <h3>ASG Stats</h3>
+                            <p>Min: 1 instance</p>
+                            <p>Desired: 1 instance</p>
+                            <p>Max: 4 instances</p>
+                        </div>
+                        <div class="stat-box">
+                            <h3>Scaling Policy</h3>
+                            <p>Scale Out: >50% CPU</p>
+                            <p>Scale In: <30% CPU</p>
+                        </div>
+                    </div>
+                </div>
+
+                <script>
+                    function runStress() {
+                        showLoading('Starting CPU stress...');
+                        fetch('/cgi-bin/stress.sh')
+                            .then(r => r.text())
+                            .then(t => { 
+                                document.getElementById('result').innerHTML = '<div style="color: #4CAF50;">' + t + '</div>';
+                            })
+                            .catch(e => { 
+                                document.getElementById('result').innerHTML = '<div style="color: #f44336;">Error: ' + e + '</div>';
+                            });
+                    }
+
+                    function stopStress() {
+                        showLoading('Stopping CPU stress...');
+                        fetch('/cgi-bin/stop-stress.sh')
+                            .then(r => r.text())
+                            .then(t => { 
+                                document.getElementById('result').innerHTML = '<div style="color: #f44336;">' + t + '</div>';
+                            })
+                            .catch(e => { 
+                                document.getElementById('result').innerHTML = '<div style="color: #f44336;">Error: ' + e + '</div>';
+                            });
+                    }
+
+                    function checkStatus() {
+                        showLoading('Checking instance status...');
+                        fetch('/cgi-bin/status.sh')
+                            .then(r => r.text())
+                            .then(t => { 
+                                document.getElementById('result').innerHTML = '<div style="color: #2196F3;">' + t + '</div>';
+                            })
+                            .catch(e => { 
+                                document.getElementById('result').innerHTML = '<div style="color: #f44336;">Error: ' + e + '</div>';
+                            });
+                    }
+
+                    function showLoading(message) {
+                        document.getElementById('result').innerHTML = '<div style="text-align: center; padding: 20px;">⏳ ' + message + '</div>';
+                    }
+
+                    // Auto-refresh page every 30 seconds to show load balancer distribution
+                    setTimeout(() => {
+                        window.location.reload();
+                    }, 30000);
+                </script>
             </body>
             </html>
             EOF
-            
-            # enable CGI handling in httpd
-            chown -R apache:apache /var/www/html /var/www/cgi-bin
-            
+
+            # Configure Apache for CGI
             cat > /etc/httpd/conf.d/cgi.conf << 'EOF'
             ScriptAlias /cgi-bin/ "/var/www/cgi-bin/"
             <Directory "/var/www/cgi-bin">
                 AllowOverride None
                 Options +ExecCGI
+                AddHandler cgi-script .sh
                 Require all granted
             </Directory>
             EOF
-            
+
+            # Set proper permissions
+            chown -R apache:apache /var/www
+            chmod 755 /var/www/cgi-bin/*.sh
+
+            # Enable and start services
             systemctl enable httpd
             systemctl start httpd
 
@@ -286,6 +444,10 @@ Resources:
         - !Ref TargetGroup
       HealthCheckType: ELB
       HealthCheckGracePeriod: 300
+      Tags:
+        - Key: Name
+          Value: AutoScalingInstance
+          PropagateAtLaunch: true
 
   ScaleOutPolicy:
     Type: AWS::AutoScaling::ScalingPolicy
@@ -296,13 +458,22 @@ Resources:
       AdjustmentType: ChangeInCapacity
       Cooldown: 300
 
+  ScaleInPolicy:
+    Type: AWS::AutoScaling::ScalingPolicy
+    Properties:
+      AutoScalingGroupName: !Ref AutoScalingGroup
+      PolicyType: SimpleScaling
+      ScalingAdjustment: -1
+      AdjustmentType: ChangeInCapacity
+      Cooldown: 300
+
   CPUAlarmHigh:
     Type: AWS::CloudWatch::Alarm
     Properties:
       EvaluationPeriods: 2
       Statistic: Average
-      Threshold: 30
-      AlarmDescription: Scale out when CPU utilization exceeds 30%
+      Threshold: 50
+      AlarmDescription: Scale out when CPU utilization exceeds 50%
       Period: 60
       Namespace: AWS/EC2
       MetricName: CPUUtilization
@@ -312,6 +483,23 @@ Resources:
           Value: !Ref AutoScalingGroup
       AlarmActions:
         - !Ref ScaleOutPolicy
+
+  CPUAlarmLow:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      EvaluationPeriods: 2
+      Statistic: Average
+      Threshold: 30
+      AlarmDescription: Scale in when CPU utilization drops below 30%
+      Period: 60
+      Namespace: AWS/EC2
+      MetricName: CPUUtilization
+      ComparisonOperator: LessThanThreshold
+      Dimensions:
+        - Name: AutoScalingGroupName
+          Value: !Ref AutoScalingGroup
+      AlarmActions:
+        - !Ref ScaleInPolicy
 
   TargetGroup:
     Type: AWS::ElasticLoadBalancingV2::TargetGroup
@@ -351,4 +539,7 @@ Outputs:
     Value: !GetAtt LoadBalancer.DNSName
   GitHubRepo:
     Description: GitHub Repository URL
-    Value: !Sub https://github.com/Tabari-Linus/auto-scaling-lab.git
+    Value: !Sub https://github.com/Tabari-Linus/auto-scaling
+  AutoScalingGroupName:
+    Description: Auto Scaling Group Name
+    Value: !Ref AutoScalingGroup
