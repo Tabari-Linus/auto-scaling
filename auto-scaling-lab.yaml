@@ -1,9 +1,8 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Description: >
-  This template deploys a highly available, auto-scaling Apache web application
-  in a VPC. It includes an Application Load Balancer and CPU-based scaling policies
-  with proper scale-down functionality. UI has been simplified to a minimal, clean layout
-  while preserving all original features (Start/Stop/Status, instructions, auto-refresh).
+  Auto-Scaling Lab Stack — ALB + ASG (private instances) running Apache.
+  ASG scales out when CPU > 30%. Instances show "Hello from [IP] / [InstanceId]"
+  and have a button to stress CPU for demonstration.
 
 Parameters:
   VpcCidr:
@@ -24,6 +23,9 @@ Parameters:
   InstanceType:
     Type: String
     Default: t3.micro
+  KeyName:
+    Type: AWS::EC2::KeyPair::KeyName
+    Description: Name of an existing EC2 KeyPair to SSH
 
 Resources:
   VPC:
@@ -38,11 +40,7 @@ Resources:
 
   InternetGateway:
     Type: AWS::EC2::InternetGateway
-    Properties:
-      Tags:
-        - Key: Name
-          Value: AutoScalingLabIGW
-          
+
   AttachGateway:
     Type: AWS::EC2::VPCGatewayAttachment
     Properties:
@@ -54,374 +52,152 @@ Resources:
     Properties:
       VpcId: !Ref VPC
       CidrBlock: !Ref PublicSubnet1Cidr
-      AvailabilityZone: !Select [0, !GetAZs '']
-      Tags:
-        - Key: Name
-          Value: PublicSubnet1
-          
+      MapPublicIpOnLaunch: true
+      AvailabilityZone: !Select [ 0, !GetAZs '' ]
+
   PublicSubnet2:
     Type: AWS::EC2::Subnet
     Properties:
       VpcId: !Ref VPC
       CidrBlock: !Ref PublicSubnet2Cidr
-      AvailabilityZone: !Select [1, !GetAZs '']
-      Tags:
-        - Key: Name
-          Value: PublicSubnet2
+      MapPublicIpOnLaunch: true
+      AvailabilityZone: !Select [ 1, !GetAZs '' ]
 
   PrivateSubnet1:
     Type: AWS::EC2::Subnet
     Properties:
       VpcId: !Ref VPC
       CidrBlock: !Ref PrivateSubnet1Cidr
-      AvailabilityZone: !Select [0, !GetAZs '']
-      Tags:
-        - Key: Name
-          Value: PrivateSubnet1
-          
+      AvailabilityZone: !Select [ 0, !GetAZs '' ]
+
   PrivateSubnet2:
     Type: AWS::EC2::Subnet
     Properties:
       VpcId: !Ref VPC
       CidrBlock: !Ref PrivateSubnet2Cidr
-      AvailabilityZone: !Select [1, !GetAZs '']
-      Tags:
-        - Key: Name
-          Value: PrivateSubnet2
+      AvailabilityZone: !Select [ 1, !GetAZs '' ]
 
   PublicRouteTable:
     Type: AWS::EC2::RouteTable
     Properties:
       VpcId: !Ref VPC
-      Tags:
-        - Key: Name
-          Value: PublicRouteTable
-          
+
   PublicRoute:
     Type: AWS::EC2::Route
+    DependsOn: AttachGateway
     Properties:
       RouteTableId: !Ref PublicRouteTable
       DestinationCidrBlock: 0.0.0.0/0
       GatewayId: !Ref InternetGateway
-      
+
   PublicSubnet1RouteTableAssociation:
     Type: AWS::EC2::SubnetRouteTableAssociation
     Properties:
       SubnetId: !Ref PublicSubnet1
       RouteTableId: !Ref PublicRouteTable
-      
+
   PublicSubnet2RouteTableAssociation:
     Type: AWS::EC2::SubnetRouteTableAssociation
     Properties:
       SubnetId: !Ref PublicSubnet2
       RouteTableId: !Ref PublicRouteTable
 
-  NatEIP:
-    Type: AWS::EC2::EIP
-    Properties:
-      Domain: vpc
-      Tags:
-        - Key: Name
-          Value: NatGatewayEIP
-          
-  NatGateway:
-    Type: AWS::EC2::NatGateway
-    Properties:
-      SubnetId: !Ref PublicSubnet1
-      AllocationId: !GetAtt NatEIP.AllocationId
-      Tags:
-        - Key: Name
-          Value: NatGateway
-          
-  PrivateRouteTable:
-    Type: AWS::EC2::RouteTable
-    Properties:
-      VpcId: !Ref VPC
-      Tags:
-        - Key: Name
-          Value: PrivateRouteTable
-          
-  PrivateRoute:
-    Type: AWS::EC2::Route
-    Properties:
-      RouteTableId: !Ref PrivateRouteTable
-      DestinationCidrBlock: 0.0.0.0/0
-      NatGatewayId: !Ref NatGateway
-      
-  PrivateSubnet1RouteTableAssociation:
-    Type: AWS::EC2::SubnetRouteTableAssociation
-    Properties:
-      SubnetId: !Ref PrivateSubnet1
-      RouteTableId: !Ref PrivateRouteTable
-      
-  PrivateSubnet2RouteTableAssociation:
-    Type: AWS::EC2::SubnetRouteTableAssociation
-    Properties:
-      SubnetId: !Ref PrivateSubnet2
-      RouteTableId: !Ref PrivateRouteTable
-
-  EC2Role:
-    Type: AWS::IAM::Role
-    Properties:
-      AssumeRolePolicyDocument:
-        Version: '2012-10-17'
-        Statement:
-          - Effect: Allow
-            Principal:
-              Service: ec2.amazonaws.com
-            Action: sts:AssumeRole
-      ManagedPolicyArns:
-        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
-        - arn:aws:iam::aws:policy/CloudWatchAgentServerPolicy
-
-  EC2InstanceProfile:
-    Type: AWS::IAM::InstanceProfile
-    Properties:
-      Roles:
-        - !Ref EC2Role
-
-  ALBSecurityGroup:
-    Type: AWS::EC2::SecurityGroup
-    Properties:
-      GroupDescription: ALB Security Group - Allow HTTP from Internet
-      VpcId: !Ref VPC
-      SecurityGroupIngress:
-        - IpProtocol: tcp
-          FromPort: 80
-          ToPort: 80
-          CidrIp: 0.0.0.0/0
-          Description: Allow HTTP from anywhere
-      SecurityGroupEgress:
-        - IpProtocol: -1
-          CidrIp: 0.0.0.0/0
-          Description: Allow all outbound traffic
-      Tags:
-        - Key: Name
-          Value: ALB-SecurityGroup
-
   InstanceSecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
-      GroupDescription: EC2 Instance Security Group - Allow HTTP from ALB only
+      GroupDescription: Allow HTTP and SSH
       VpcId: !Ref VPC
       SecurityGroupIngress:
         - IpProtocol: tcp
           FromPort: 80
           ToPort: 80
-          SourceSecurityGroupId: !Ref ALBSecurityGroup
-          Description: Allow HTTP from ALB only
+          CidrIp: 0.0.0.0/0
         - IpProtocol: tcp
           FromPort: 22
           ToPort: 22
           CidrIp: 0.0.0.0/0
-          Description: Allow SSH for troubleshooting
-      SecurityGroupEgress:
-        - IpProtocol: -1
+
+  ALBSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Allow HTTP
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
           CidrIp: 0.0.0.0/0
-          Description: Allow all outbound traffic
-      Tags:
-        - Key: Name
-          Value: Instance-SecurityGroup
+
+  ALB:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Subnets:
+        - !Ref PublicSubnet1
+        - !Ref PublicSubnet2
+      SecurityGroups:
+        - !Ref ALBSecurityGroup
+
+  TargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      VpcId: !Ref VPC
+      Port: 80
+      Protocol: HTTP
+      TargetType: instance
+      HealthCheckPath: /
+
+  Listener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      LoadBalancerArn: !Ref ALB
+      Port: 80
+      Protocol: HTTP
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref TargetGroup
 
   LaunchTemplate:
     Type: AWS::EC2::LaunchTemplate
     Properties:
-      LaunchTemplateName: AutoScaling-LaunchTemplate
       LaunchTemplateData:
         InstanceType: !Ref InstanceType
         ImageId: !Sub '{{resolve:ssm:/aws/service/ami-amazon-linux-latest/amzn2-ami-hvm-x86_64-gp2}}'
+        KeyName: !Ref KeyName
         SecurityGroupIds:
           - !Ref InstanceSecurityGroup
-        IamInstanceProfile:
-          Arn: !GetAtt EC2InstanceProfile.Arn
-        TagSpecifications:
-          - ResourceType: instance
-            Tags:
-              - Key: Name
-                Value: AutoScaling-Instance
         UserData:
           Fn::Base64: !Sub |
-            #!/bin/bash -xe
-            yum update -y
-            yum install -y httpd
-
-            # Create cgi-bin directory for stress scripts
-            mkdir -p /var/www/cgi-bin
-
-            # CPU stress script with 5-minute auto-timeout (minimal output)
-            cat > /var/www/cgi-bin/stress.sh << 'EOF'
             #!/bin/bash
-            echo "Content-type: text/html"
-            echo ""
-            pkill -f "yes > /dev/null" 2>/dev/null || true
-            sleep 2
-            nohup bash -c '
-                yes > /dev/null & PID1=$!
-                yes > /dev/null & PID2=$!
-                yes > /dev/null & PID3=$!
-                sleep 300
-                kill $PID1 $PID2 $PID3 2>/dev/null || true
-                pkill -f "yes > /dev/null" 2>/dev/null || true
-            ' >/dev/null 2>&1 &
-
-            echo "<html><head><meta charset='utf-8'><title>Stress Started</title></head><body style='font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial; max-width: 720px; margin: 40px auto; padding: 0 16px;'>"
-            echo "<h2>CPU Stress Test Started</h2>"
-            echo "<p><strong>Instance:</strong> $(curl -s http://169.254.169.254/latest/meta-data/instance-id)</p>"
-            echo "<p><strong>Duration:</strong> 5 minutes (auto-stop)</p>"
-            echo "<ul><li>CPU will spike to ~100%</li><li>ASG may scale out if average CPU > 30%</li><li>Stress ends automatically after 5 minutes</li><li>ASG scales in once CPU normalizes</li></ul>"
-            echo "</body></html>"
-            EOF
-
-            # Manual stop script (minimal output)
-            cat > /var/www/cgi-bin/stop-stress.sh << 'EOF'
-            #!/bin/bash
-            echo "Content-type: text/html"
-            echo ""
-            pkill -f "yes > /dev/null" 2>/dev/null || true
-            killall yes 2>/dev/null || true
-            sleep 1
-            pkill -9 -f "yes > /dev/null" 2>/dev/null || true
-
-            echo "<html><head><meta charset='utf-8'><title>Stress Stopped</title></head><body style='font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial; max-width: 720px; margin: 40px auto; padding: 0 16px;'>"
-            echo "<h2>CPU Stress Test Stopped</h2>"
-            echo "<p>All stress processes have been terminated.</p>"
-            echo "<p>CPU usage should return to normal within 1–2 minutes.</p>"
-            echo "</body></html>"
-            EOF
-
-            # Status check script (minimal output)
-            cat > /var/www/cgi-bin/status.sh << 'EOF'
-            #!/bin/bash
-            echo "Content-type: text/html"
-            echo ""
+            yum install -y httpd stress
             INSTANCE_ID=$(curl -s http://169.254.169.254/latest/meta-data/instance-id)
-            STRESS_PROCESSES=$(ps aux | grep -c "yes > /dev/null" || echo "0")
-            LOAD_AVG=$(uptime | awk -F'load average:' '{print $2}' | xargs)
-
-            echo "<html><head><meta charset='utf-8'><title>Status</title></head><body style='font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial; max-width: 720px; margin: 40px auto; padding: 0 16px;'>"
-            echo "<h2>Instance Status</h2>"
-            echo "<p><strong>Instance ID:</strong> $INSTANCE_ID</p>"
-            echo "<p><strong>Active Stress Processes:</strong> $STRESS_PROCESSES</p>"
-            echo "<p><strong>Load Average:</strong> $LOAD_AVG</p>"
-            echo "<p><strong>Timestamp:</strong> $(date)</p>"
-            if [ "$STRESS_PROCESSES" -gt 0 ]; then
-              echo "<p><strong>Status:</strong> CPU stress test is running</p>"
-            else
-              echo "<p><strong>Status:</strong> No active stress test</p>"
-            fi
-            echo "</body></html>"
+            LOCAL_IP=$(curl -s http://169.254.169.254/latest/meta-data/local-ipv4)
+            echo "Hello from ${LOCAL_IP} / ${INSTANCE_ID}" > /var/www/html/index.html
+            cat <<'EOF' > /var/www/html/stress.html
+            <html><body style="font-family:sans-serif;text-align:center;margin-top:50px;">
+            <h2>CPU Stress Test</h2>
+            <button onclick="location.href='/stress/start'">Start Stress</button>
+            <button onclick="location.href='/stress/stop'">Stop Stress</button>
+            <button onclick="location.href='/stress/status'">Status</button>
+            <p>Refreshes every 2 minutes for demo.</p>
+            <script>setTimeout(()=>location.reload(),120000);</script>
+            </body></html>
             EOF
-
-            chmod +x /var/www/cgi-bin/*.sh
-
-            # Get instance metadata
-            TOKEN=$(curl -X PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 21600" -s)
-            META_IP=$(curl -H "X-aws-ec2-metadata-token: $TOKEN" -s http://169.254.169.254/latest/meta-data/local-ipv4)
-            META_ID=$(curl -H "X-aws-ec2-metadata-token: $TOKEN" -s http://169.254.169.254/latest/meta-data/instance-id)
-            AZ=$(curl -H "X-aws-ec2-metadata-token: $TOKEN" -s http://169.254.169.254/latest/meta-data/placement/availability-zone)
-
-            # Minimal index page preserving all features
-            cat > /var/www/html/index.html << EOF
-            <!DOCTYPE html>
-            <html lang="en">
-            <head>
-              <meta charset="utf-8" />
-              <meta name="viewport" content="width=device-width, initial-scale=1" />
-              <title>Auto Scaling Lab</title>
-              <style>
-                :root { --fg:#111; --muted:#666; --border:#e5e7eb; --bg:#fff; }
-                * { box-sizing: border-box; }
-                body { margin: 0; font-family: system-ui,-apple-system,Segoe UI,Roboto,Arial; color: var(--fg); background: var(--bg); }
-                .wrap { max-width: 760px; margin: 48px auto; padding: 0 16px; }
-                header { border-bottom: 1px solid var(--border); padding-bottom: 16px; margin-bottom: 24px; }
-                h1 { font-size: 22px; font-weight: 600; margin: 0 0 8px; }
-                .sub { color: var(--muted); font-size: 14px; margin: 0; }
-                .card { border: 1px solid var(--border); border-radius: 10px; padding: 20px; }
-                .row { display: flex; gap: 8px; flex-wrap: wrap; margin: 12px 0 0; }
-                button { appearance: none; border: 1px solid var(--border); background: #fff; border-radius: 8px; padding: 10px 14px; font-size: 14px; cursor: pointer; }
-                button:hover { background: #f9fafb; }
-                #result { border: 1px dashed var(--border); border-radius: 8px; padding: 16px; min-height: 88px; margin-top: 16px; font-size: 14px; }
-                .meta { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; font-size: 14px; margin-top: 8px; }
-                .muted { color: var(--muted); }
-                ol, ul { margin: 8px 0 0 18px; }
-                footer { margin-top: 24px; color: var(--muted); font-size: 12px; text-align: center; }
-              </style>
-            </head>
-            <body>
-              <main class="wrap">
-                <header>
-                  <h1>Auto Scaling Lab</h1>
-                  <p class="sub">Minimal UI • Same functionality</p>
-                </header>
-
-                <section class="card">
-                  <div class="meta">
-                    <div><strong>Instance:</strong> $META_IP</div>
-                    <div><strong>ID:</strong> $META_ID</div>
-                    <div><strong>AZ:</strong> $AZ</div>
-                    <div class="muted">This page demonstrates scale-out & scale-in behavior.</div>
-                  </div>
-
-                  <div class="row">
-                    <button onclick="stressTest()" aria-label="Start CPU stress test">Start CPU Stress (5 min)</button>
-                    <button onclick="stopStress()" aria-label="Stop CPU stress test">Stop</button>
-                    <button onclick="checkStatus()" aria-label="Check instance status">Status</button>
-                  </div>
-
-                  <div id="result">
-                    <p><strong>Instructions</strong></p>
-                    <ul>
-                      <li>Start the stress test. CPU should rise above 30%.</li>
-                      <li>ASG target tracking (30% CPU) may add instances (max 4).</li>
-                      <li>After 5 minutes, stress stops and ASG scales in.</li>
-                    </ul>
-                  </div>
-
-                  <div style="margin-top:16px" class="muted">
-                    <strong>Auto-Scaling Config:</strong> min 1 • desired 1 • max 4 • target 30% CPU
-                  </div>
-                </section>
-
-                <footer>
-                  Page auto-refreshes every 2 minutes to rotate instances.
-                </footer>
-              </main>
-
-              <script>
-                function render(html){ document.getElementById('result').innerHTML = html; }
-                function fetchText(url){ return fetch(url).then(r=>r.text()); }
-                function stressTest(){ render('<p>Starting CPU stress…</p>'); fetchText('/cgi-bin/stress.sh').then(render).catch(e=>render('<p>Error: '+e+'</p>')); }
-                function stopStress(){ render('<p>Stopping CPU stress…</p>'); fetchText('/cgi-bin/stop-stress.sh').then(render).catch(e=>render('<p>Error: '+e+'</p>')); }
-                function checkStatus(){ render('<p>Checking status…</p>'); fetchText('/cgi-bin/status.sh').then(render).catch(e=>render('<p>Error: '+e+'</p>')); }
-                setTimeout(function(){ location.reload(); }, 120000);
-              </script>
-            </body>
-            </html>
+            cat <<'EOF' > /var/www/cgi-bin/stress
+            #!/bin/bash
+            case "$PATH_INFO" in
+              /start) stress --cpu 2 & echo "Started" ;;
+              /stop) pkill stress && echo "Stopped" ;;
+              /status) pgrep stress >/dev/null && echo "Running" || echo "Idle" ;;
+              *) echo "Usage: /stress/start|stop|status" ;;
+            esac
             EOF
-
-            # Configure Apache for CGI execution
-            cat > /etc/httpd/conf.d/cgi.conf << 'EOF'
-            ScriptAlias /cgi-bin/ "/var/www/cgi-bin/"
-            <Directory "/var/www/cgi-bin">
-                AllowOverride None
-                Options +ExecCGI
-                AddHandler cgi-script .sh
-                Require all granted
-            </Directory>
-            EOF
-
-            # Set proper permissions
-            chown -R apache:apache /var/www
-            chmod 755 /var/www/cgi-bin/*.sh
-
-            # Enable and start Apache
+            chmod +x /var/www/cgi-bin/stress
             systemctl enable httpd
             systemctl start httpd
 
   AutoScalingGroup:
     Type: AWS::AutoScaling::AutoScalingGroup
     Properties:
-      AutoScalingGroupName: AutoScaling-Lab-ASG
       VPCZoneIdentifier:
         - !Ref PrivateSubnet1
         - !Ref PrivateSubnet2
@@ -433,20 +209,8 @@ Resources:
       DesiredCapacity: 1
       TargetGroupARNs:
         - !Ref TargetGroup
-      HealthCheckType: ELB
-      HealthCheckGracePeriod: 300
-      DefaultCooldown: 300
-      TerminationPolicies:
-        - OldestInstance
-      Tags:
-        - Key: Name
-          Value: AutoScaling-Instance
-          PropagateAtLaunch: true
-        - Key: Environment
-          Value: Lab
-          PropagateAtLaunch: true
 
-  CPUTargetTrackingPolicy:
+  CPUScalingPolicy:
     Type: AWS::AutoScaling::ScalingPolicy
     Properties:
       AutoScalingGroupName: !Ref AutoScalingGroup
@@ -455,76 +219,9 @@ Resources:
         PredefinedMetricSpecification:
           PredefinedMetricType: ASGAverageCPUUtilization
         TargetValue: 30.0
-        DisableScaleIn: false
-
-  TargetGroup:
-    Type: AWS::ElasticLoadBalancingV2::TargetGroup
-    Properties:
-      Name: AutoScaling-Lab-TG
-      VpcId: !Ref VPC
-      Port: 80
-      Protocol: HTTP
-      HealthCheckPath: /index.html
-      HealthCheckIntervalSeconds: 30
-      HealthCheckTimeoutSeconds: 5
-      HealthyThresholdCount: 2
-      UnhealthyThresholdCount: 2
-      TargetType: instance
-      TargetGroupAttributes:
-        - Key: deregistration_delay.timeout_seconds
-          Value: '30'
-        - Key: stickiness.enabled
-          Value: 'false'
-      Tags:
-        - Key: Name
-          Value: AutoScaling-Lab-TargetGroup
-
-  LoadBalancer:
-    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
-    Properties:
-      Name: AutoScaling-Lab-ALB
-      Subnets:
-        - !Ref PublicSubnet1
-        - !Ref PublicSubnet2
-      SecurityGroups:
-        - !Ref ALBSecurityGroup
-      Scheme: internet-facing
-      Type: application
-      Tags:
-        - Key: Name
-          Value: AutoScaling-Lab-LoadBalancer
-          
-  Listener:
-    Type: AWS::ElasticLoadBalancingV2::Listener
-    Properties:
-      LoadBalancerArn: !Ref LoadBalancer
-      Port: 80
-      Protocol: HTTP
-      DefaultActions:
-        - Type: forward
-          TargetGroupArn: !Ref TargetGroup
+        Cooldown: 300
 
 Outputs:
   LoadBalancerDNS:
-    Description: "ALB DNS Name - Use this URL to access your auto-scaling application"
-    Value: !GetAtt LoadBalancer.DNSName
-    Export:
-      Name: !Sub "${AWS::StackName}-ALB-DNS"
-      
-  LoadBalancerURL:
-    Description: "Complete URL to access the application"
-    Value: !Sub "http://${LoadBalancer.DNSName}"
-    
-  AutoScalingGroupName:
-    Description: "Auto Scaling Group Name - Monitor this in EC2 console"
-    Value: !Ref AutoScalingGroup
-    Export:
-      Name: !Sub "${AWS::StackName}-ASG-Name"
-      
-  GitHubRepo:
-    Description: "GitHub Repository URL"
-    Value: "https://github.com/Tabari-Linus/auto-scaling.git"
-    
-  TestInstructions:
-    Description: "How to test auto-scaling"
-    Value: "Access the LoadBalancer URL, click 'Start CPU Stress', monitor EC2 console for new instances, wait 5 minutes for auto scale-down"
+    Description: ALB DNS Name
+    Value: !GetAtt ALB.DNSName
