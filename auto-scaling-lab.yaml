@@ -198,7 +198,7 @@ Resources:
             yum install -y httpd stress
             INSTANCE_ID=$(curl -s http://169.254.169.254/latest/meta-data/instance-id)
             LOCAL_IP=$(curl -s http://169.254.169.254/latest/meta-data/local-ipv4)
-            echo "Hello from ${LOCAL_IP} / ${INSTANCE_ID}" > /var/www/html/index.html
+            echo "Hello from $LOCAL_IP / $INSTANCE_ID" > /var/www/html/index.html
             cat <<'EOF' > /var/www/html/stress.html
             <html><body style="font-family:sans-serif;text-align:center;margin-top:50px;">
             <h2>CPU Stress Test</h2>
