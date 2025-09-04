@@ -588,7 +588,7 @@ Resources:
           PredefinedMetricType: ASGAverageCPUUtilization
         TargetValue: 30.0
         DisableScaleIn: false
-        ScaleInCooldown: 300
+        InstanceWarmup: 300
 
   TargetGroup:
     Type: AWS::ElasticLoadBalancingV2::TargetGroup
