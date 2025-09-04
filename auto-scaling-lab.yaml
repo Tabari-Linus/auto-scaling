@@ -1,8 +1,8 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Description: >
   Auto-Scaling Lab Stack — ALB + ASG (private instances) running Apache.
-  ASG scales out when CPU > 30%. Instances show "Hello from [IP] / [InstanceId]"
-  and have a button to stress CPU for demonstration.
+  ASG scales dynamically when CPU > 30% and scales back in when CPU < 30%.
+  Instances only serve traffic through the ALB (no SSH access).
 
 Parameters:
   VpcCidr:
@@ -23,9 +23,6 @@ Parameters:
   InstanceType:
     Type: String
     Default: t3.micro
-  KeyName:
-    Type: AWS::EC2::KeyPair::KeyName
-    Description: Name of an existing EC2 KeyPair to SSH
 
 Resources:
   VPC:
@@ -34,9 +31,6 @@ Resources:
       CidrBlock: !Ref VpcCidr
       EnableDnsSupport: true
       EnableDnsHostnames: true
-      Tags:
-        - Key: Name
-          Value: AutoScalingLabVPC
 
   InternetGateway:
     Type: AWS::EC2::InternetGateway
@@ -102,19 +96,53 @@ Resources:
       SubnetId: !Ref PublicSubnet2
       RouteTableId: !Ref PublicRouteTable
 
+  NatEIP:
+    Type: AWS::EC2::EIP
+    Properties:
+      Domain: vpc
+
+  NatGateway:
+    Type: AWS::EC2::NatGateway
+    Properties:
+      SubnetId: !Ref PublicSubnet1
+      AllocationId: !GetAtt NatEIP.AllocationId
+
+  PrivateRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+
+  PrivateRoute:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref NatGateway
+
+  PrivateSubnet1RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PrivateSubnet1
+      RouteTableId: !Ref PrivateRouteTable
+
+  PrivateSubnet2RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PrivateSubnet2
+      RouteTableId: !Ref PrivateRouteTable
+
   InstanceSecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
-      GroupDescription: Allow HTTP and SSH
+      GroupDescription: Allow HTTP from ALB only
       VpcId: !Ref VPC
       SecurityGroupIngress:
         - IpProtocol: tcp
           FromPort: 80
           ToPort: 80
-          CidrIp: 0.0.0.0/0
-        - IpProtocol: tcp
-          FromPort: 22
-          ToPort: 22
+          SourceSecurityGroupId: !Ref ALBSecurityGroup
+      SecurityGroupEgress:
+        - IpProtocol: -1
           CidrIp: 0.0.0.0/0
 
   ALBSecurityGroup:
@@ -162,7 +190,6 @@ Resources:
       LaunchTemplateData:
         InstanceType: !Ref InstanceType
         ImageId: !Sub '{{resolve:ssm:/aws/service/ami-amazon-linux-latest/amzn2-ami-hvm-x86_64-gp2}}'
-        KeyName: !Ref KeyName
         SecurityGroupIds:
           - !Ref InstanceSecurityGroup
         UserData:
@@ -225,3 +252,6 @@ Outputs:
   LoadBalancerDNS:
     Description: ALB DNS Name
     Value: !GetAtt ALB.DNSName
+  LoadBalancerURL:
+    Description: URL to access the application
+    Value: !Sub "http://${ALB.DNSName}"
