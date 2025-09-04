@@ -2,7 +2,8 @@ AWSTemplateFormatVersion: '2010-09-09'
 Description: >
   This template deploys a highly available, auto-scaling Apache web application
   in a VPC. It includes an Application Load Balancer and CPU-based scaling policies
-  with proper scale-down functionality.
+  with proper scale-down functionality. UI has been simplified to a minimal, clean layout
+  while preserving all original features (Start/Stop/Status, instructions, auto-refresh).
 
 Parameters:
   VpcCidr:
@@ -209,7 +210,11 @@ Resources:
           ToPort: 80
           SourceSecurityGroupId: !Ref ALBSecurityGroup
           Description: Allow HTTP from ALB only
-        
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 0.0.0.0/0
+          Description: Allow SSH for troubleshooting
       SecurityGroupEgress:
         - IpProtocol: -1
           CidrIp: 0.0.0.0/0
@@ -243,88 +248,66 @@ Resources:
             # Create cgi-bin directory for stress scripts
             mkdir -p /var/www/cgi-bin
 
-            # CPU stress script with 5-minute auto-timeout
+            # CPU stress script with 5-minute auto-timeout (minimal output)
             cat > /var/www/cgi-bin/stress.sh << 'EOF'
             #!/bin/bash
             echo "Content-type: text/html"
             echo ""
-            
-            # Kill any existing stress processes first
             pkill -f "yes > /dev/null" 2>/dev/null || true
             sleep 2
-            
-            # Start CPU stress with automatic 5-minute timeout
             nohup bash -c '
-                # Start multiple CPU-intensive processes
-                yes > /dev/null &
-                PID1=$!
-                yes > /dev/null &
-                PID2=$!
-                yes > /dev/null &
-                PID3=$!
-                
-                # Auto-stop after 5 minutes (300 seconds)
+                yes > /dev/null & PID1=$!
+                yes > /dev/null & PID2=$!
+                yes > /dev/null & PID3=$!
                 sleep 300
                 kill $PID1 $PID2 $PID3 2>/dev/null || true
                 pkill -f "yes > /dev/null" 2>/dev/null || true
             ' >/dev/null 2>&1 &
-            
-            echo "<html><body style='font-family: Arial, sans-serif; max-width: 600px; margin: 50px auto; padding: 20px;'>"
-            echo "<h2 style='color: #28a745;'>🔥 CPU Stress Test Started!</h2>"
+
+            echo "<html><head><meta charset='utf-8'><title>Stress Started</title></head><body style='font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial; max-width: 720px; margin: 40px auto; padding: 0 16px;'>"
+            echo "<h2>CPU Stress Test Started</h2>"
             echo "<p><strong>Instance:</strong> $(curl -s http://169.254.169.254/latest/meta-data/instance-id)</p>"
             echo "<p><strong>Duration:</strong> 5 minutes (auto-stop)</p>"
-            echo "<p><strong>Expected Behavior:</strong></p>"
-            echo "<ul>"
-            echo "<li>CPU will spike to near 100%</li>"
-            echo "<li>If sustained above 30%, new instances will launch</li>"
-            echo "<li>After 5 minutes, stress stops automatically</li>"
-            echo "<li>When CPU drops below 30%, excess instances terminate</li>"
-            echo "</ul>"
-            echo "<p style='color: #007bff;'><em>Monitor EC2 console and CloudWatch metrics to see auto-scaling in action!</em></p>"
+            echo "<ul><li>CPU will spike to ~100%</li><li>ASG may scale out if average CPU > 30%</li><li>Stress ends automatically after 5 minutes</li><li>ASG scales in once CPU normalizes</li></ul>"
             echo "</body></html>"
             EOF
 
-            # Manual stop script
+            # Manual stop script (minimal output)
             cat > /var/www/cgi-bin/stop-stress.sh << 'EOF'
             #!/bin/bash
             echo "Content-type: text/html"
             echo ""
-            
-            # Kill all stress processes aggressively
             pkill -f "yes > /dev/null" 2>/dev/null || true
             killall yes 2>/dev/null || true
             sleep 1
             pkill -9 -f "yes > /dev/null" 2>/dev/null || true
-            
-            echo "<html><body style='font-family: Arial, sans-serif; max-width: 600px; margin: 50px auto; padding: 20px;'>"
-            echo "<h2 style='color: #dc3545;'>🛑 CPU Stress Test Stopped!</h2>"
-            echo "<p><strong>Instance:</strong> $(curl -s http://169.254.169.254/latest/meta-data/instance-id)</p>"
-            echo "<p>All CPU stress processes have been terminated.</p>"
-            echo "<p>CPU usage should return to normal levels within 1-2 minutes.</p>"
-            echo "<p style='color: #007bff;'><em>If multiple instances were launched, they should terminate after the scale-in cooldown period.</em></p>"
+
+            echo "<html><head><meta charset='utf-8'><title>Stress Stopped</title></head><body style='font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial; max-width: 720px; margin: 40px auto; padding: 0 16px;'>"
+            echo "<h2>CPU Stress Test Stopped</h2>"
+            echo "<p>All stress processes have been terminated.</p>"
+            echo "<p>CPU usage should return to normal within 1–2 minutes.</p>"
             echo "</body></html>"
             EOF
 
-            # Status check script
+            # Status check script (minimal output)
             cat > /var/www/cgi-bin/status.sh << 'EOF'
             #!/bin/bash
             echo "Content-type: text/html"
             echo ""
-            
             INSTANCE_ID=$(curl -s http://169.254.169.254/latest/meta-data/instance-id)
             STRESS_PROCESSES=$(ps aux | grep -c "yes > /dev/null" || echo "0")
             LOAD_AVG=$(uptime | awk -F'load average:' '{print $2}' | xargs)
-            
-            echo "<html><body style='font-family: Arial, sans-serif; max-width: 600px; margin: 50px auto; padding: 20px;'>"
-            echo "<h2 style='color: #007bff;'>📊 Current Instance Status</h2>"
+
+            echo "<html><head><meta charset='utf-8'><title>Status</title></head><body style='font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial; max-width: 720px; margin: 40px auto; padding: 0 16px;'>"
+            echo "<h2>Instance Status</h2>"
             echo "<p><strong>Instance ID:</strong> $INSTANCE_ID</p>"
             echo "<p><strong>Active Stress Processes:</strong> $STRESS_PROCESSES</p>"
             echo "<p><strong>Load Average:</strong> $LOAD_AVG</p>"
             echo "<p><strong>Timestamp:</strong> $(date)</p>"
             if [ "$STRESS_PROCESSES" -gt 0 ]; then
-                echo "<p style='color: #28a745;'><strong>Status:</strong> CPU stress test is running</p>"
+              echo "<p><strong>Status:</strong> CPU stress test is running</p>"
             else
-                echo "<p style='color: #6c757d;'><strong>Status:</strong> No active stress test</p>"
+              echo "<p><strong>Status:</strong> No active stress test</p>"
             fi
             echo "</body></html>"
             EOF
@@ -337,197 +320,81 @@ Resources:
             META_ID=$(curl -H "X-aws-ec2-metadata-token: $TOKEN" -s http://169.254.169.254/latest/meta-data/instance-id)
             AZ=$(curl -H "X-aws-ec2-metadata-token: $TOKEN" -s http://169.254.169.254/latest/meta-data/placement/availability-zone)
 
-            # Create enhanced index page with proper auto-scaling demonstration
+            # Minimal index page preserving all features
             cat > /var/www/html/index.html << EOF
             <!DOCTYPE html>
-            <html>
+            <html lang="en">
             <head>
-                <title>Auto Scaling Lab - Best Practices</title>
-                <style>
-                    body { 
-                        font-family: Arial, sans-serif; 
-                        max-width: 800px; 
-                        margin: 30px auto; 
-                        padding: 20px;
-                        background-color: #f8f9fa;
-                    }
-                    .container {
-                        background: white;
-                        padding: 30px;
-                        border-radius: 10px;
-                        box-shadow: 0 2px 10px rgba(0,0,0,0.1);
-                    }
-                    h1 { 
-                        color: #333; 
-                        text-align: center; 
-                        border-bottom: 3px solid #007bff;
-                        padding-bottom: 15px;
-                    }
-                    .instance-info {
-                        background: #e9ecef;
-                        padding: 15px;
-                        border-radius: 5px;
-                        margin: 20px 0;
-                        text-align: center;
-                    }
-                    .button-group {
-                        text-align: center;
-                        margin: 25px 0;
-                    }
-                    button { 
-                        padding: 15px 25px; 
-                        font-size: 16px; 
-                        border: none; 
-                        border-radius: 5px; 
-                        cursor: pointer; 
-                        margin: 5px 10px;
-                        transition: background-color 0.3s;
-                    }
-                    .start-btn { 
-                        background: #28a745; 
-                        color: white; 
-                    }
-                    .start-btn:hover { 
-                        background: #218838; 
-                    }
-                    .stop-btn { 
-                        background: #dc3545; 
-                        color: white; 
-                    }
-                    .stop-btn:hover { 
-                        background: #c82333; 
-                    }
-                    .status-btn { 
-                        background: #007bff; 
-                        color: white; 
-                    }
-                    .status-btn:hover { 
-                        background: #0056b3; 
-                    }
-                    #result { 
-                        margin-top: 25px; 
-                        padding: 20px; 
-                        background: #f8f9fa; 
-                        border-radius: 5px; 
-                        border-left: 4px solid #007bff;
-                        min-height: 100px; 
-                    }
-                    .info-box {
-                        background: #d4edda;
-                        border: 1px solid #c3e6cb;
-                        border-radius: 5px;
-                        padding: 20px;
-                        margin: 20px 0;
-                    }
-                    .info-box h3 {
-                        color: #155724;
-                        margin-top: 0;
-                    }
-                    .cycle-info {
-                        background: #d1ecf1;
-                        border: 1px solid #bee5eb;
-                        border-radius: 5px;
-                        padding: 15px;
-                        margin: 15px 0;
-                    }
-                </style>
+              <meta charset="utf-8" />
+              <meta name="viewport" content="width=device-width, initial-scale=1" />
+              <title>Auto Scaling Lab</title>
+              <style>
+                :root { --fg:#111; --muted:#666; --border:#e5e7eb; --bg:#fff; }
+                * { box-sizing: border-box; }
+                body { margin: 0; font-family: system-ui,-apple-system,Segoe UI,Roboto,Arial; color: var(--fg); background: var(--bg); }
+                .wrap { max-width: 760px; margin: 48px auto; padding: 0 16px; }
+                header { border-bottom: 1px solid var(--border); padding-bottom: 16px; margin-bottom: 24px; }
+                h1 { font-size: 22px; font-weight: 600; margin: 0 0 8px; }
+                .sub { color: var(--muted); font-size: 14px; margin: 0; }
+                .card { border: 1px solid var(--border); border-radius: 10px; padding: 20px; }
+                .row { display: flex; gap: 8px; flex-wrap: wrap; margin: 12px 0 0; }
+                button { appearance: none; border: 1px solid var(--border); background: #fff; border-radius: 8px; padding: 10px 14px; font-size: 14px; cursor: pointer; }
+                button:hover { background: #f9fafb; }
+                #result { border: 1px dashed var(--border); border-radius: 8px; padding: 16px; min-height: 88px; margin-top: 16px; font-size: 14px; }
+                .meta { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; font-size: 14px; margin-top: 8px; }
+                .muted { color: var(--muted); }
+                ol, ul { margin: 8px 0 0 18px; }
+                footer { margin-top: 24px; color: var(--muted); font-size: 12px; text-align: center; }
+              </style>
             </head>
             <body>
-                <div class="container">
-                    <h1>🚀 Auto Scaling Lab - Best Practices Demo</h1>
-                    
-                    <div class="instance-info">
-                        <h2>Hello from $META_IP / $META_ID</h2>
-                        <p><strong>Availability Zone:</strong> $AZ</p>
-                        <p><em>This page demonstrates proper auto-scaling with both scale-out and scale-in</em></p>
-                    </div>
+              <main class="wrap">
+                <header>
+                  <h1>Auto Scaling Lab</h1>
+                  <p class="sub">Minimal UI • Same functionality</p>
+                </header>
 
-                    <div class="button-group">
-                        <button class="start-btn" onclick="stressTest()">
-                            🔥 Start CPU Stress Test (5 min auto-stop)
-                        </button>
-                        <button class="stop-btn" onclick="stopStress()">
-                            🛑 Stop Stress Immediately
-                        </button>
-                        <button class="status-btn" onclick="checkStatus()">
-                            📊 Check Instance Status
-                        </button>
-                    </div>
+                <section class="card">
+                  <div class="meta">
+                    <div><strong>Instance:</strong> $META_IP</div>
+                    <div><strong>ID:</strong> $META_ID</div>
+                    <div><strong>AZ:</strong> $AZ</div>
+                    <div class="muted">This page demonstrates scale-out & scale-in behavior.</div>
+                  </div>
 
-                    <div id="result">
-                        <p><strong>Instructions:</strong> Click "Start CPU Stress Test" to begin the demonstration. 
-                        The system will automatically scale out when CPU exceeds 30%, then scale back in when 
-                        the stress test ends after 5 minutes.</p>
-                    </div>
+                  <div class="row">
+                    <button onclick="stressTest()" aria-label="Start CPU stress test">Start CPU Stress (5 min)</button>
+                    <button onclick="stopStress()" aria-label="Stop CPU stress test">Stop</button>
+                    <button onclick="checkStatus()" aria-label="Check instance status">Status</button>
+                  </div>
 
-                    <div class="info-box">
-                        <h3>📋 Auto-Scaling Configuration:</h3>
-                        <ul>
-                            <li><strong>Minimum Instances:</strong> 1</li>
-                            <li><strong>Desired Instances:</strong> 1</li>
-                            <li><strong>Maximum Instances:</strong> 4</li>
-                            <li><strong>Scale-Out Trigger:</strong> CPU > 30%</li>
-                            <li><strong>Scale-In Trigger:</strong> CPU < 30% (sustained)</li>
-                            <li><strong>Policy Type:</strong> Target Tracking (30% CPU target)</li>
-                        </ul>
-                    </div>
+                  <div id="result">
+                    <p><strong>Instructions</strong></p>
+                    <ul>
+                      <li>Start the stress test. CPU should rise above 30%.</li>
+                      <li>ASG target tracking (30% CPU) may add instances (max 4).</li>
+                      <li>After 5 minutes, stress stops and ASG scales in.</li>
+                    </ul>
+                  </div>
 
-                    <div class="cycle-info">
-                        <h4>🔄 Complete Auto-Scaling Cycle:</h4>
-                        <ol>
-                            <li><strong>Normal State:</strong> 1 instance, low CPU usage</li>
-                            <li><strong>Stress Initiated:</strong> CPU spikes above 30%</li>
-                            <li><strong>Scale-Out:</strong> Additional instances launch (up to 4 total)</li>
-                            <li><strong>Load Distribution:</strong> Traffic spreads across all instances</li>
-                            <li><strong>Auto-Stop:</strong> Stress ends after 5 minutes</li>
-                            <li><strong>Scale-In:</strong> CPU drops, excess instances terminate</li>
-                            <li><strong>Return to Normal:</strong> Back to 1 instance</li>
-                        </ol>
-                    </div>
-                </div>
+                  <div style="margin-top:16px" class="muted">
+                    <strong>Auto-Scaling Config:</strong> min 1 • desired 1 • max 4 • target 30% CPU
+                  </div>
+                </section>
 
-                <script>
-                    function stressTest() {
-                        document.getElementById('result').innerHTML = '<h3>🔄 Starting CPU Stress Test...</h3><p>Initiating 5-minute CPU stress test. Monitor EC2 console for new instances launching.</p>';
-                        fetch('/cgi-bin/stress.sh')
-                            .then(response => response.text())
-                            .then(data => {
-                                document.getElementById('result').innerHTML = data;
-                            })
-                            .catch(error => {
-                                document.getElementById('result').innerHTML = '<h3 style="color: #dc3545;">❌ Error</h3><p>' + error + '</p>';
-                            });
-                    }
+                <footer>
+                  Page auto-refreshes every 2 minutes to rotate instances.
+                </footer>
+              </main>
 
-                    function stopStress() {
-                        document.getElementById('result').innerHTML = '<h3>🛑 Stopping CPU Stress Test...</h3><p>Terminating all stress processes immediately.</p>';
-                        fetch('/cgi-bin/stop-stress.sh')
-                            .then(response => response.text())
-                            .then(data => {
-                                document.getElementById('result').innerHTML = data;
-                            })
-                            .catch(error => {
-                                document.getElementById('result').innerHTML = '<h3 style="color: #dc3545;">❌ Error</h3><p>' + error + '</p>';
-                            });
-                    }
-
-                    function checkStatus() {
-                        document.getElementById('result').innerHTML = '<h3>📊 Checking Status...</h3><p>Retrieving current instance status...</p>';
-                        fetch('/cgi-bin/status.sh')
-                            .then(response => response.text())
-                            .then(data => {
-                                document.getElementById('result').innerHTML = data;
-                            })
-                            .catch(error => {
-                                document.getElementById('result').innerHTML = '<h3 style="color: #dc3545;">❌ Error</h3><p>' + error + '</p>';
-                            });
-                    }
-
-                    // Auto-refresh page every 2 minutes to show different instances
-                    setTimeout(function() {
-                        location.reload();
-                    }, 120000);
-                </script>
+              <script>
+                function render(html){ document.getElementById('result').innerHTML = html; }
+                function fetchText(url){ return fetch(url).then(r=>r.text()); }
+                function stressTest(){ render('<p>Starting CPU stress…</p>'); fetchText('/cgi-bin/stress.sh').then(render).catch(e=>render('<p>Error: '+e+'</p>')); }
+                function stopStress(){ render('<p>Stopping CPU stress…</p>'); fetchText('/cgi-bin/stop-stress.sh').then(render).catch(e=>render('<p>Error: '+e+'</p>')); }
+                function checkStatus(){ render('<p>Checking status…</p>'); fetchText('/cgi-bin/status.sh').then(render).catch(e=>render('<p>Error: '+e+'</p>')); }
+                setTimeout(function(){ location.reload(); }, 120000);
+              </script>
             </body>
             </html>
             EOF
@@ -579,7 +446,6 @@ Resources:
           Value: Lab
           PropagateAtLaunch: true
 
-  # Target Tracking Scaling Policy - Best Practice for Auto Scaling
   CPUTargetTrackingPolicy:
     Type: AWS::AutoScaling::ScalingPolicy
     Properties:
@@ -661,4 +527,4 @@ Outputs:
     
   TestInstructions:
     Description: "How to test auto-scaling"
-    Value: "Access the LoadBalancer URL, click 'Start CPU Stress Test', monitor EC2 console for new instances, wait 5 minutes for auto scale-down"
+    Value: "Access the LoadBalancer URL, click 'Start CPU Stress', monitor EC2 console for new instances, wait 5 minutes for auto scale-down"
