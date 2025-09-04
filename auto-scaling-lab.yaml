@@ -572,15 +572,9 @@ Resources:
         - !Ref TargetGroup
       HealthCheckType: ELB
       HealthCheckGracePeriod: 300
-      cooldown: 300
-      TerminationPolicies:
-        - OldestInstance
       Tags:
         - Key: Name
-          Value: AutoScaling-Instance
-          PropagateAtLaunch: true
-        - Key: Environment
-          Value: Lab
+          Value: !Sub "${AWS::StackName}-instance"
           PropagateAtLaunch: true
 
   # Target Tracking Scaling Policy - Best Practice for Auto Scaling
@@ -594,6 +588,7 @@ Resources:
           PredefinedMetricType: ASGAverageCPUUtilization
         TargetValue: 30.0
         DisableScaleIn: false
+        ScaleInCooldown: 300
 
   TargetGroup:
     Type: AWS::ElasticLoadBalancingV2::TargetGroup
