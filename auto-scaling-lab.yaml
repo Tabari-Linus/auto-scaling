@@ -355,6 +355,7 @@ Resources:
         - !Ref TargetGroup
       HealthCheckType: ELB
       HealthCheckGracePeriod: 300
+      DefaultInstanceWarmup: 300
       Tags:
         - Key: Name
           Value: !Sub "${AWS::StackName}-instance"
@@ -371,7 +372,6 @@ Resources:
           PredefinedMetricType: ASGAverageCPUUtilization
         TargetValue: 30.0
         DisableScaleIn: false
-        InstanceWarmup: 300
 
 Outputs:
   WebUrl:
