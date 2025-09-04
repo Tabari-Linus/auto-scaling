@@ -1,7 +1,8 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Description: >
   This template deploys a highly available, auto-scaling Apache web application
-  in a VPC. It includes an Application Load Balancer and CPU-based scaling policies.
+  in a VPC. It includes an Application Load Balancer and CPU-based scaling policies
+  with proper scale-down functionality.
 
 Parameters:
   VpcCidr:
@@ -40,6 +41,7 @@ Resources:
       Tags:
         - Key: Name
           Value: AutoScalingLabIGW
+          
   AttachGateway:
     Type: AWS::EC2::VPCGatewayAttachment
     Properties:
@@ -55,6 +57,7 @@ Resources:
       Tags:
         - Key: Name
           Value: PublicSubnet1
+          
   PublicSubnet2:
     Type: AWS::EC2::Subnet
     Properties:
@@ -74,6 +77,7 @@ Resources:
       Tags:
         - Key: Name
           Value: PrivateSubnet1
+          
   PrivateSubnet2:
     Type: AWS::EC2::Subnet
     Properties:
@@ -88,17 +92,23 @@ Resources:
     Type: AWS::EC2::RouteTable
     Properties:
       VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: PublicRouteTable
+          
   PublicRoute:
     Type: AWS::EC2::Route
     Properties:
       RouteTableId: !Ref PublicRouteTable
       DestinationCidrBlock: 0.0.0.0/0
       GatewayId: !Ref InternetGateway
+      
   PublicSubnet1RouteTableAssociation:
     Type: AWS::EC2::SubnetRouteTableAssociation
     Properties:
       SubnetId: !Ref PublicSubnet1
       RouteTableId: !Ref PublicRouteTable
+      
   PublicSubnet2RouteTableAssociation:
     Type: AWS::EC2::SubnetRouteTableAssociation
     Properties:
@@ -109,26 +119,40 @@ Resources:
     Type: AWS::EC2::EIP
     Properties:
       Domain: vpc
+      Tags:
+        - Key: Name
+          Value: NatGatewayEIP
+          
   NatGateway:
     Type: AWS::EC2::NatGateway
     Properties:
       SubnetId: !Ref PublicSubnet1
       AllocationId: !GetAtt NatEIP.AllocationId
+      Tags:
+        - Key: Name
+          Value: NatGateway
+          
   PrivateRouteTable:
     Type: AWS::EC2::RouteTable
     Properties:
       VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: PrivateRouteTable
+          
   PrivateRoute:
     Type: AWS::EC2::Route
     Properties:
       RouteTableId: !Ref PrivateRouteTable
       DestinationCidrBlock: 0.0.0.0/0
       NatGatewayId: !Ref NatGateway
+      
   PrivateSubnet1RouteTableAssociation:
     Type: AWS::EC2::SubnetRouteTableAssociation
     Properties:
       SubnetId: !Ref PrivateSubnet1
       RouteTableId: !Ref PrivateRouteTable
+      
   PrivateSubnet2RouteTableAssociation:
     Type: AWS::EC2::SubnetRouteTableAssociation
     Properties:
@@ -158,38 +182,46 @@ Resources:
   ALBSecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
-      GroupDescription: ALB Security Group
+      GroupDescription: ALB Security Group - Allow HTTP from Internet
       VpcId: !Ref VPC
       SecurityGroupIngress:
         - IpProtocol: tcp
           FromPort: 80
           ToPort: 80
           CidrIp: 0.0.0.0/0
+          Description: Allow HTTP from anywhere
       SecurityGroupEgress:
         - IpProtocol: -1
           CidrIp: 0.0.0.0/0
+          Description: Allow all outbound traffic
+      Tags:
+        - Key: Name
+          Value: ALB-SecurityGroup
 
   InstanceSecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
-      GroupDescription: EC2 Instance Security Group
+      GroupDescription: EC2 Instance Security Group - Allow HTTP from ALB only
       VpcId: !Ref VPC
       SecurityGroupIngress:
         - IpProtocol: tcp
           FromPort: 80
           ToPort: 80
           SourceSecurityGroupId: !Ref ALBSecurityGroup
-        - IpProtocol: tcp
-          FromPort: 22
-          ToPort: 22
-          CidrIp: 0.0.0.0/0
+          Description: Allow HTTP from ALB only
+        
       SecurityGroupEgress:
         - IpProtocol: -1
           CidrIp: 0.0.0.0/0
+          Description: Allow all outbound traffic
+      Tags:
+        - Key: Name
+          Value: Instance-SecurityGroup
 
   LaunchTemplate:
     Type: AWS::EC2::LaunchTemplate
     Properties:
+      LaunchTemplateName: AutoScaling-LaunchTemplate
       LaunchTemplateData:
         InstanceType: !Ref InstanceType
         ImageId: !Sub '{{resolve:ssm:/aws/service/ami-amazon-linux-latest/amzn2-ami-hvm-x86_64-gp2}}'
@@ -197,80 +229,310 @@ Resources:
           - !Ref InstanceSecurityGroup
         IamInstanceProfile:
           Arn: !GetAtt EC2InstanceProfile.Arn
+        TagSpecifications:
+          - ResourceType: instance
+            Tags:
+              - Key: Name
+                Value: AutoScaling-Instance
         UserData:
           Fn::Base64: !Sub |
             #!/bin/bash -xe
             yum update -y
             yum install -y httpd
 
-            # Create cgi-bin directory for stress script
+            # Create cgi-bin directory for stress scripts
             mkdir -p /var/www/cgi-bin
 
-            # Simple CPU stress script
+            # CPU stress script with 5-minute auto-timeout
             cat > /var/www/cgi-bin/stress.sh << 'EOF'
             #!/bin/bash
             echo "Content-type: text/html"
             echo ""
             
-            # Start CPU stress using yes commands
-            nohup bash -c 'yes > /dev/null &' >/dev/null 2>&1
-            nohup bash -c 'yes > /dev/null &' >/dev/null 2>&1
+            # Kill any existing stress processes first
+            pkill -f "yes > /dev/null" 2>/dev/null || true
+            sleep 2
             
-            echo "<html><body>"
-            echo "<h2>CPU stress started!</h2>"
-            echo "<p>Instance: $(curl -s http://169.254.169.254/latest/meta-data/instance-id)</p>"
-            echo "<p>CPU should reach high utilization and trigger auto-scaling</p>"
+            # Start CPU stress with automatic 5-minute timeout
+            nohup bash -c '
+                # Start multiple CPU-intensive processes
+                yes > /dev/null &
+                PID1=$!
+                yes > /dev/null &
+                PID2=$!
+                yes > /dev/null &
+                PID3=$!
+                
+                # Auto-stop after 5 minutes (300 seconds)
+                sleep 300
+                kill $PID1 $PID2 $PID3 2>/dev/null || true
+                pkill -f "yes > /dev/null" 2>/dev/null || true
+            ' >/dev/null 2>&1 &
+            
+            echo "<html><body style='font-family: Arial, sans-serif; max-width: 600px; margin: 50px auto; padding: 20px;'>"
+            echo "<h2 style='color: #28a745;'>🔥 CPU Stress Test Started!</h2>"
+            echo "<p><strong>Instance:</strong> $(curl -s http://169.254.169.254/latest/meta-data/instance-id)</p>"
+            echo "<p><strong>Duration:</strong> 5 minutes (auto-stop)</p>"
+            echo "<p><strong>Expected Behavior:</strong></p>"
+            echo "<ul>"
+            echo "<li>CPU will spike to near 100%</li>"
+            echo "<li>If sustained above 30%, new instances will launch</li>"
+            echo "<li>After 5 minutes, stress stops automatically</li>"
+            echo "<li>When CPU drops below 30%, excess instances terminate</li>"
+            echo "</ul>"
+            echo "<p style='color: #007bff;'><em>Monitor EC2 console and CloudWatch metrics to see auto-scaling in action!</em></p>"
             echo "</body></html>"
             EOF
 
-            chmod +x /var/www/cgi-bin/stress.sh
+            # Manual stop script
+            cat > /var/www/cgi-bin/stop-stress.sh << 'EOF'
+            #!/bin/bash
+            echo "Content-type: text/html"
+            echo ""
+            
+            # Kill all stress processes aggressively
+            pkill -f "yes > /dev/null" 2>/dev/null || true
+            killall yes 2>/dev/null || true
+            sleep 1
+            pkill -9 -f "yes > /dev/null" 2>/dev/null || true
+            
+            echo "<html><body style='font-family: Arial, sans-serif; max-width: 600px; margin: 50px auto; padding: 20px;'>"
+            echo "<h2 style='color: #dc3545;'>🛑 CPU Stress Test Stopped!</h2>"
+            echo "<p><strong>Instance:</strong> $(curl -s http://169.254.169.254/latest/meta-data/instance-id)</p>"
+            echo "<p>All CPU stress processes have been terminated.</p>"
+            echo "<p>CPU usage should return to normal levels within 1-2 minutes.</p>"
+            echo "<p style='color: #007bff;'><em>If multiple instances were launched, they should terminate after the scale-in cooldown period.</em></p>"
+            echo "</body></html>"
+            EOF
+
+            # Status check script
+            cat > /var/www/cgi-bin/status.sh << 'EOF'
+            #!/bin/bash
+            echo "Content-type: text/html"
+            echo ""
+            
+            INSTANCE_ID=$(curl -s http://169.254.169.254/latest/meta-data/instance-id)
+            STRESS_PROCESSES=$(ps aux | grep -c "yes > /dev/null" || echo "0")
+            LOAD_AVG=$(uptime | awk -F'load average:' '{print $2}' | xargs)
+            
+            echo "<html><body style='font-family: Arial, sans-serif; max-width: 600px; margin: 50px auto; padding: 20px;'>"
+            echo "<h2 style='color: #007bff;'>📊 Current Instance Status</h2>"
+            echo "<p><strong>Instance ID:</strong> $INSTANCE_ID</p>"
+            echo "<p><strong>Active Stress Processes:</strong> $STRESS_PROCESSES</p>"
+            echo "<p><strong>Load Average:</strong> $LOAD_AVG</p>"
+            echo "<p><strong>Timestamp:</strong> $(date)</p>"
+            if [ "$STRESS_PROCESSES" -gt 0 ]; then
+                echo "<p style='color: #28a745;'><strong>Status:</strong> CPU stress test is running</p>"
+            else
+                echo "<p style='color: #6c757d;'><strong>Status:</strong> No active stress test</p>"
+            fi
+            echo "</body></html>"
+            EOF
+
+            chmod +x /var/www/cgi-bin/*.sh
 
             # Get instance metadata
             TOKEN=$(curl -X PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 21600" -s)
             META_IP=$(curl -H "X-aws-ec2-metadata-token: $TOKEN" -s http://169.254.169.254/latest/meta-data/local-ipv4)
             META_ID=$(curl -H "X-aws-ec2-metadata-token: $TOKEN" -s http://169.254.169.254/latest/meta-data/instance-id)
+            AZ=$(curl -H "X-aws-ec2-metadata-token: $TOKEN" -s http://169.254.169.254/latest/meta-data/placement/availability-zone)
 
-            # Create simple index page as per lab requirements
+            # Create enhanced index page with proper auto-scaling demonstration
             cat > /var/www/html/index.html << EOF
             <!DOCTYPE html>
             <html>
             <head>
-                <title>Auto Scaling Lab</title>
+                <title>Auto Scaling Lab - Best Practices</title>
                 <style>
-                    body { font-family: Arial, sans-serif; max-width: 600px; margin: 50px auto; padding: 20px; }
-                    h1 { color: #333; text-align: center; }
-                    button { padding: 15px 30px; font-size: 16px; background: #007bff; color: white; border: none; border-radius: 5px; cursor: pointer; }
-                    button:hover { background: #0056b3; }
-                    #result { margin-top: 20px; padding: 15px; background: #f8f9fa; border-radius: 5px; }
+                    body { 
+                        font-family: Arial, sans-serif; 
+                        max-width: 800px; 
+                        margin: 30px auto; 
+                        padding: 20px;
+                        background-color: #f8f9fa;
+                    }
+                    .container {
+                        background: white;
+                        padding: 30px;
+                        border-radius: 10px;
+                        box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+                    }
+                    h1 { 
+                        color: #333; 
+                        text-align: center; 
+                        border-bottom: 3px solid #007bff;
+                        padding-bottom: 15px;
+                    }
+                    .instance-info {
+                        background: #e9ecef;
+                        padding: 15px;
+                        border-radius: 5px;
+                        margin: 20px 0;
+                        text-align: center;
+                    }
+                    .button-group {
+                        text-align: center;
+                        margin: 25px 0;
+                    }
+                    button { 
+                        padding: 15px 25px; 
+                        font-size: 16px; 
+                        border: none; 
+                        border-radius: 5px; 
+                        cursor: pointer; 
+                        margin: 5px 10px;
+                        transition: background-color 0.3s;
+                    }
+                    .start-btn { 
+                        background: #28a745; 
+                        color: white; 
+                    }
+                    .start-btn:hover { 
+                        background: #218838; 
+                    }
+                    .stop-btn { 
+                        background: #dc3545; 
+                        color: white; 
+                    }
+                    .stop-btn:hover { 
+                        background: #c82333; 
+                    }
+                    .status-btn { 
+                        background: #007bff; 
+                        color: white; 
+                    }
+                    .status-btn:hover { 
+                        background: #0056b3; 
+                    }
+                    #result { 
+                        margin-top: 25px; 
+                        padding: 20px; 
+                        background: #f8f9fa; 
+                        border-radius: 5px; 
+                        border-left: 4px solid #007bff;
+                        min-height: 100px; 
+                    }
+                    .info-box {
+                        background: #d4edda;
+                        border: 1px solid #c3e6cb;
+                        border-radius: 5px;
+                        padding: 20px;
+                        margin: 20px 0;
+                    }
+                    .info-box h3 {
+                        color: #155724;
+                        margin-top: 0;
+                    }
+                    .cycle-info {
+                        background: #d1ecf1;
+                        border: 1px solid #bee5eb;
+                        border-radius: 5px;
+                        padding: 15px;
+                        margin: 15px 0;
+                    }
                 </style>
             </head>
             <body>
-                <h1>Hello from $META_IP / $META_ID</h1>
-                
-                <div style="text-align: center;">
-                    <button onclick="stressTest()">Start CPU Stress Test</button>
-                </div>
+                <div class="container">
+                    <h1>🚀 Auto Scaling Lab - Best Practices Demo</h1>
+                    
+                    <div class="instance-info">
+                        <h2>Hello from $META_IP / $META_ID</h2>
+                        <p><strong>Availability Zone:</strong> $AZ</p>
+                        <p><em>This page demonstrates proper auto-scaling with both scale-out and scale-in</em></p>
+                    </div>
 
-                <div id="result"></div>
+                    <div class="button-group">
+                        <button class="start-btn" onclick="stressTest()">
+                            🔥 Start CPU Stress Test (5 min auto-stop)
+                        </button>
+                        <button class="stop-btn" onclick="stopStress()">
+                            🛑 Stop Stress Immediately
+                        </button>
+                        <button class="status-btn" onclick="checkStatus()">
+                            📊 Check Instance Status
+                        </button>
+                    </div>
+
+                    <div id="result">
+                        <p><strong>Instructions:</strong> Click "Start CPU Stress Test" to begin the demonstration. 
+                        The system will automatically scale out when CPU exceeds 30%, then scale back in when 
+                        the stress test ends after 5 minutes.</p>
+                    </div>
+
+                    <div class="info-box">
+                        <h3>📋 Auto-Scaling Configuration:</h3>
+                        <ul>
+                            <li><strong>Minimum Instances:</strong> 1</li>
+                            <li><strong>Desired Instances:</strong> 1</li>
+                            <li><strong>Maximum Instances:</strong> 4</li>
+                            <li><strong>Scale-Out Trigger:</strong> CPU > 30%</li>
+                            <li><strong>Scale-In Trigger:</strong> CPU < 30% (sustained)</li>
+                            <li><strong>Policy Type:</strong> Target Tracking (30% CPU target)</li>
+                        </ul>
+                    </div>
+
+                    <div class="cycle-info">
+                        <h4>🔄 Complete Auto-Scaling Cycle:</h4>
+                        <ol>
+                            <li><strong>Normal State:</strong> 1 instance, low CPU usage</li>
+                            <li><strong>Stress Initiated:</strong> CPU spikes above 30%</li>
+                            <li><strong>Scale-Out:</strong> Additional instances launch (up to 4 total)</li>
+                            <li><strong>Load Distribution:</strong> Traffic spreads across all instances</li>
+                            <li><strong>Auto-Stop:</strong> Stress ends after 5 minutes</li>
+                            <li><strong>Scale-In:</strong> CPU drops, excess instances terminate</li>
+                            <li><strong>Return to Normal:</strong> Back to 1 instance</li>
+                        </ol>
+                    </div>
+                </div>
 
                 <script>
                     function stressTest() {
-                        document.getElementById('result').innerHTML = 'Starting CPU stress test...';
+                        document.getElementById('result').innerHTML = '<h3>🔄 Starting CPU Stress Test...</h3><p>Initiating 5-minute CPU stress test. Monitor EC2 console for new instances launching.</p>';
                         fetch('/cgi-bin/stress.sh')
                             .then(response => response.text())
                             .then(data => {
                                 document.getElementById('result').innerHTML = data;
                             })
                             .catch(error => {
-                                document.getElementById('result').innerHTML = 'Error: ' + error;
+                                document.getElementById('result').innerHTML = '<h3 style="color: #dc3545;">❌ Error</h3><p>' + error + '</p>';
                             });
                     }
+
+                    function stopStress() {
+                        document.getElementById('result').innerHTML = '<h3>🛑 Stopping CPU Stress Test...</h3><p>Terminating all stress processes immediately.</p>';
+                        fetch('/cgi-bin/stop-stress.sh')
+                            .then(response => response.text())
+                            .then(data => {
+                                document.getElementById('result').innerHTML = data;
+                            })
+                            .catch(error => {
+                                document.getElementById('result').innerHTML = '<h3 style="color: #dc3545;">❌ Error</h3><p>' + error + '</p>';
+                            });
+                    }
+
+                    function checkStatus() {
+                        document.getElementById('result').innerHTML = '<h3>📊 Checking Status...</h3><p>Retrieving current instance status...</p>';
+                        fetch('/cgi-bin/status.sh')
+                            .then(response => response.text())
+                            .then(data => {
+                                document.getElementById('result').innerHTML = data;
+                            })
+                            .catch(error => {
+                                document.getElementById('result').innerHTML = '<h3 style="color: #dc3545;">❌ Error</h3><p>' + error + '</p>';
+                            });
+                    }
+
+                    // Auto-refresh page every 2 minutes to show different instances
+                    setTimeout(function() {
+                        location.reload();
+                    }, 120000);
                 </script>
             </body>
             </html>
             EOF
 
-            # Configure Apache for CGI
+            # Configure Apache for CGI execution
             cat > /etc/httpd/conf.d/cgi.conf << 'EOF'
             ScriptAlias /cgi-bin/ "/var/www/cgi-bin/"
             <Directory "/var/www/cgi-bin">
@@ -285,32 +547,39 @@ Resources:
             chown -R apache:apache /var/www
             chmod 755 /var/www/cgi-bin/*.sh
 
-            # Enable and start services
+            # Enable and start Apache
             systemctl enable httpd
             systemctl start httpd
-            
+
   AutoScalingGroup:
     Type: AWS::AutoScaling::AutoScalingGroup
     Properties:
+      AutoScalingGroupName: AutoScaling-Lab-ASG
       VPCZoneIdentifier:
         - !Ref PrivateSubnet1
         - !Ref PrivateSubnet2
       LaunchTemplate:
         LaunchTemplateId: !Ref LaunchTemplate
         Version: !GetAtt LaunchTemplate.LatestVersionNumber
-      MinSize: '1'
-      MaxSize: '4'
-      DesiredCapacity: '1'
+      MinSize: 1
+      MaxSize: 4
+      DesiredCapacity: 1
       TargetGroupARNs:
         - !Ref TargetGroup
       HealthCheckType: ELB
       HealthCheckGracePeriod: 300
+      DefaultCooldown: 300
+      TerminationPolicies:
+        - OldestInstance
       Tags:
         - Key: Name
-          Value: AutoScalingInstance
+          Value: AutoScaling-Instance
+          PropagateAtLaunch: true
+        - Key: Environment
+          Value: Lab
           PropagateAtLaunch: true
 
-  # Use Target Tracking Scaling Policy (more reliable than simple scaling)
+  # Target Tracking Scaling Policy - Best Practice for Auto Scaling
   CPUTargetTrackingPolicy:
     Type: AWS::AutoScaling::ScalingPolicy
     Properties:
@@ -325,6 +594,7 @@ Resources:
   TargetGroup:
     Type: AWS::ElasticLoadBalancingV2::TargetGroup
     Properties:
+      Name: AutoScaling-Lab-TG
       VpcId: !Ref VPC
       Port: 80
       Protocol: HTTP
@@ -334,16 +604,30 @@ Resources:
       HealthyThresholdCount: 2
       UnhealthyThresholdCount: 2
       TargetType: instance
+      TargetGroupAttributes:
+        - Key: deregistration_delay.timeout_seconds
+          Value: '30'
+        - Key: stickiness.enabled
+          Value: 'false'
+      Tags:
+        - Key: Name
+          Value: AutoScaling-Lab-TargetGroup
 
   LoadBalancer:
     Type: AWS::ElasticLoadBalancingV2::LoadBalancer
     Properties:
+      Name: AutoScaling-Lab-ALB
       Subnets:
         - !Ref PublicSubnet1
         - !Ref PublicSubnet2
       SecurityGroups:
         - !Ref ALBSecurityGroup
       Scheme: internet-facing
+      Type: application
+      Tags:
+        - Key: Name
+          Value: AutoScaling-Lab-LoadBalancer
+          
   Listener:
     Type: AWS::ElasticLoadBalancingV2::Listener
     Properties:
@@ -356,11 +640,25 @@ Resources:
 
 Outputs:
   LoadBalancerDNS:
-    Description: ALB DNS Name
+    Description: "ALB DNS Name - Use this URL to access your auto-scaling application"
     Value: !GetAtt LoadBalancer.DNSName
-  GitHubRepo:
-    Description: GitHub Repository URL
-    Value: !Sub https://github.com/Tabari-Linus/auto-scaling.git
+    Export:
+      Name: !Sub "${AWS::StackName}-ALB-DNS"
+      
+  LoadBalancerURL:
+    Description: "Complete URL to access the application"
+    Value: !Sub "http://${LoadBalancer.DNSName}"
+    
   AutoScalingGroupName:
-    Description: Auto Scaling Group Name
+    Description: "Auto Scaling Group Name - Monitor this in EC2 console"
     Value: !Ref AutoScalingGroup
+    Export:
+      Name: !Sub "${AWS::StackName}-ASG-Name"
+      
+  GitHubRepo:
+    Description: "GitHub Repository URL"
+    Value: "https://github.com/Tabari-Linus/auto-scaling.git"
+    
+  TestInstructions:
+    Description: "How to test auto-scaling"
+    Value: "Access the LoadBalancer URL, click 'Start CPU Stress Test', monitor EC2 console for new instances, wait 5 minutes for auto scale-down"
