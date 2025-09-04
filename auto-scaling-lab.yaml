@@ -411,25 +411,8 @@ Resources:
                         border-radius: 5px; 
                         border-left: 4px solid #007bff;
                         min-height: 100px; 
-                    }
-                    .info-box {
-                        background: #d4edda;
-                        border: 1px solid #c3e6cb;
-                        border-radius: 5px;
-                        padding: 20px;
-                        margin: 20px 0;
-                    }
-                    .info-box h3 {
-                        color: #155724;
-                        margin-top: 0;
-                    }
-                    .cycle-info {
-                        background: #d1ecf1;
-                        border: 1px solid #bee5eb;
-                        border-radius: 5px;
-                        padding: 15px;
-                        margin: 15px 0;
-                    }
+                    }              
+                  
                 </style>
             </head>
             <body>
@@ -444,7 +427,7 @@ Resources:
 
                     <div class="button-group">
                         <button class="start-btn" onclick="stressTest()">
-                            🔥 Start CPU Stress Test (5 min auto-stop)
+                            🔥 Start CPU Stress Test
                         </button>
                         <button class="stop-btn" onclick="stopStress()">
                             🛑 Stop Stress Immediately
@@ -458,31 +441,6 @@ Resources:
                         <p><strong>Instructions:</strong> Click "Start CPU Stress Test" to begin the demonstration. 
                         The system will automatically scale out when CPU exceeds 30%, then scale back in when 
                         the stress test ends after 5 minutes.</p>
-                    </div>
-
-                    <div class="info-box">
-                        <h3>📋 Auto-Scaling Configuration:</h3>
-                        <ul>
-                            <li><strong>Minimum Instances:</strong> 1</li>
-                            <li><strong>Desired Instances:</strong> 1</li>
-                            <li><strong>Maximum Instances:</strong> 4</li>
-                            <li><strong>Scale-Out Trigger:</strong> CPU > 30%</li>
-                            <li><strong>Scale-In Trigger:</strong> CPU < 30% (sustained)</li>
-                            <li><strong>Policy Type:</strong> Target Tracking (30% CPU target)</li>
-                        </ul>
-                    </div>
-
-                    <div class="cycle-info">
-                        <h4>🔄 Complete Auto-Scaling Cycle:</h4>
-                        <ol>
-                            <li><strong>Normal State:</strong> 1 instance, low CPU usage</li>
-                            <li><strong>Stress Initiated:</strong> CPU spikes above 30%</li>
-                            <li><strong>Scale-Out:</strong> Additional instances launch (up to 4 total)</li>
-                            <li><strong>Load Distribution:</strong> Traffic spreads across all instances</li>
-                            <li><strong>Auto-Stop:</strong> Stress ends after 5 minutes</li>
-                            <li><strong>Scale-In:</strong> CPU drops, excess instances terminate</li>
-                            <li><strong>Return to Normal:</strong> Back to 1 instance</li>
-                        </ol>
                     </div>
                 </div>
 
